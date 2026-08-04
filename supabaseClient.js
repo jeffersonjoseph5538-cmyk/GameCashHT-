@@ -1,0 +1,804 @@
+import React, { useState, useEffect } from 'react';
+import { Gem, Home, ShoppingCart, Tag, Clock, Wallet, User, Lock, Mail, Phone, Plus, ArrowUpRight, ArrowDownRight, X, Check, Copy, ChevronRight, LogOut, Shield, Image as ImageIcon, Save } from 'lucide-react';
+import { supabase } from './supabaseClient.js';
+
+const DEFAULT_CATALOG = {
+  brand_name: 'GameCashHT',
+  logo_url: '',
+  merchant_moncash: '+509 3XXX XXXX',
+  merchant_natcash: '+509 3XXX XXXX',
+  games: [
+    {
+      id: 'freefire', name: 'Free Fire', color: '#FF6A00', imgUrl: '',
+      packs: [
+        { id: 'ff1', label: '100 Diamants', price: 150 },
+        { id: 'ff2', label: '310 Diamants', price: 450 },
+        { id: 'ff3', label: '520 Diamants', price: 750 },
+        { id: 'ff4', label: '1060 Diamants', price: 1450 },
+      ]
+    },
+    {
+      id: 'mlbb', name: 'Mobile Legends', color: '#00D2FF', imgUrl: '',
+      packs: [
+        { id: 'ml1', label: '86 Diamants', price: 140 },
+        { id: 'ml2', label: '172 Diamants', price: 280 },
+        { id: 'ml3', label: '429 Diamants', price: 650 },
+        { id: 'ml4', label: '878 Diamants', price: 1300 },
+      ]
+    },
+    {
+      id: 'pubg', name: 'PUBG Mobile', color: '#F2A900', imgUrl: '',
+      packs: [
+        { id: 'pb1', label: '60 UC', price: 130 },
+        { id: 'pb2', label: '325 UC', price: 600 },
+        { id: 'pb3', label: '660 UC', price: 1150 },
+        { id: 'pb4', label: '1800 UC', price: 2900 },
+      ]
+    }
+  ]
+};
+
+const fmt = (n) => `${Number(n || 0).toLocaleString('fr-HT')} HTG`;
+
+// ---------- Main App ----------
+export default function App() {
+  const [screen, setScreen] = useState('home');
+  const [session, setSession] = useState(null);
+  const [profile, setProfile] = useState(null); // row from `users` table
+  const [history, setHistory] = useState([]);
+  const [catalog, setCatalog] = useState(DEFAULT_CATALOG);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [selectedGame, setSelectedGame] = useState(null);
+  const [depositOpen, setDepositOpen] = useState(false);
+  const [buyOpen, setBuyOpen] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState(null);
+
+  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 2500); };
+
+  // Load catalog (public) + watch auth session
+  useEffect(() => {
+    loadCatalog();
+
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      if (data.session) loadProfile(data.session.user.id);
+      else setLoading(false);
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+      if (newSession) loadProfile(newSession.user.id);
+      else { setProfile(null); setHistory([]); setLoading(false); }
+    });
+
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
+  const loadCatalog = async () => {
+    const { data, error } = await supabase.from('catalog').select('*').eq('id', 1).maybeSingle();
+    if (!error && data) {
+      setCatalog({
+        brand_name: data.brand_name || DEFAULT_CATALOG.brand_name,
+        logo_url: data.logo_url || '',
+        merchant_moncash: data.merchant_moncash || DEFAULT_CATALOG.merchant_moncash,
+        merchant_natcash: data.merchant_natcash || DEFAULT_CATALOG.merchant_natcash,
+        games: (data.games && data.games.length > 0) ? data.games : DEFAULT_CATALOG.games,
+      });
+    } else {
+      // Aucune ligne encore: on en crée une avec les valeurs par défaut
+      await supabase.from('catalog').upsert({ id: 1, ...DEFAULT_CATALOG, games: DEFAULT_CATALOG.games });
+    }
+  };
+
+  const loadProfile = async (userId) => {
+    const { data: userRow } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
+    setProfile(userRow || null);
+    const { data: txs } = await supabase
+      .from('transactions')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+    setHistory(txs || []);
+    setLoading(false);
+  };
+
+  const refreshProfile = async () => {
+    if (session) await loadProfile(session.user.id);
+  };
+
+  // ---------- Auth actions ----------
+  const handleRegister = async (email, password, name, phone) => {
+    const { data, error } = await supabase.auth.signUp({ email, password });
+    if (error) { showToast(error.message); return false; }
+    if (data.user) {
+      const { error: insertErr } = await supabase.from('users').insert({
+        id: data.user.id, name, phone, password_hash: 'managed_by_supabase_auth', balance: 0, is_admin: false
+      });
+      if (insertErr) { showToast(insertErr.message); return false; }
+    }
+    setAuthOpen(false);
+    showToast('Compte créé ! Vérifie ton email si demandé.');
+    return true;
+  };
+
+  const handleLogin = async (email, password) => {
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) { showToast('Email ou mot de passe incorrect'); return false; }
+    setAuthOpen(false);
+    showToast('Bon retour !');
+    return true;
+  };
+
+  const ADMIN_MASTER_KEY = 'GameCashHT-2026'; // ⚠️ change cette clé avant mise en ligne, garde-la secrète
+
+  const handleAdminRegister = async (email, password, name, phone, masterKey) => {
+    if (masterKey !== ADMIN_MASTER_KEY) { showToast('Clé maîtresse incorrecte'); return false; }
+    const { data, error } = await supabase.auth.signUp({ email, password });
+    if (error) { showToast(error.message); return false; }
+    if (data.user) {
+      const { error: insertErr } = await supabase.from('users').insert({
+        id: data.user.id, name, phone, password_hash: 'managed_by_supabase_auth', balance: 0, is_admin: true
+      });
+      if (insertErr) { showToast(insertErr.message); return false; }
+    }
+    setAuthOpen(false);
+    showToast('Compte admin créé');
+    return true;
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setScreen('home');
+  };
+
+  // ---------- Deposits & purchases ----------
+  const submitDeposit = async ({ method, amount, txId }) => {
+    if (!session) return;
+    const { error } = await supabase.from('transactions').insert({
+      user_id: session.user.id, type: 'deposit', method, amount: Number(amount), tx_id: txId, status: 'pending'
+    });
+    if (error) { showToast(error.message); return; }
+    setDepositOpen(false);
+    showToast('Demande de dépôt envoyée. Traitement sous peu.');
+    refreshProfile();
+  };
+
+  const submitPurchase = async (pack, game) => {
+    if (!profile) { setAuthOpen(true); return; }
+    if (profile.balance < pack.price) {
+      showToast("Solde insuffisant. Fais un dépôt d'abord.");
+      setBuyOpen(null);
+      setDepositOpen(true);
+      return;
+    }
+    const { error: txError } = await supabase.from('transactions').insert({
+      user_id: session.user.id, type: 'purchase', game: game.name, pack_label: pack.label, amount: pack.price, status: 'pending'
+    });
+    if (txError) { showToast(txError.message); return; }
+
+    const { error: balError } = await supabase
+      .from('users')
+      .update({ balance: profile.balance - pack.price })
+      .eq('id', session.user.id);
+    if (balError) { showToast(balError.message); return; }
+
+    setBuyOpen(null);
+    showToast('Commande envoyée ! Livraison sous peu.');
+    refreshProfile();
+  };
+
+  // ---------- Admin: save catalog ----------
+  const saveCatalog = async (c) => {
+    const { error } = await supabase.from('catalog').upsert({ id: 1, ...c });
+    if (error) { showToast(error.message); return; }
+    setCatalog(c);
+    showToast('Modifications enregistrées et visibles par tous.');
+  };
+
+  if (loading) {
+    return (
+      <div style={{ minHeight: '100vh', background: '#0B0E1A', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Gem size={40} color="#5B5FEF" className="animate-pulse" />
+      </div>
+    );
+  }
+
+  return (
+    <div style={{
+      minHeight: '100vh', background: '#0B0E1A', color: '#F5F6FA',
+      fontFamily: "'Inter', -apple-system, sans-serif", display: 'flex', flexDirection: 'column',
+      maxWidth: 480, margin: '0 auto', position: 'relative'
+    }}>
+      <style>{`
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+        .animate-pulse { animation: pulse 1.5s infinite; }
+        * { box-sizing: border-box; }
+        ::-webkit-scrollbar { display: none; }
+        button { font-family: inherit; cursor: pointer; }
+        input { font-family: inherit; }
+      `}</style>
+
+      <Header catalog={catalog} profile={profile} onAuthClick={() => setAuthOpen(true)} onLogout={handleLogout} onAdminClick={() => setScreen('admin')} />
+
+      <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 90 }}>
+        {screen === 'home' && (
+          <HomeScreen catalog={catalog} onSelectGame={(g) => { setSelectedGame(g); setScreen('boutique'); }} />
+        )}
+        {screen === 'boutique' && (
+          <BoutiqueScreen
+            catalog={catalog} selectedGame={selectedGame} setSelectedGame={setSelectedGame}
+            onBuy={(pack, game) => { if (!session) { setAuthOpen(true); } else { setBuyOpen({ pack, game }); } }}
+          />
+        )}
+        {screen === 'promos' && <PromosScreen />}
+        {screen === 'historique' && <HistoriqueScreen history={history} session={session} onAuthClick={() => setAuthOpen(true)} />}
+        {screen === 'wallet' && (
+          <WalletScreen profile={profile} history={history} session={session} onAuthClick={() => setAuthOpen(true)} onDeposit={() => setDepositOpen(true)} />
+        )}
+        {screen === 'admin' && profile?.is_admin && (
+          <AdminScreen catalog={catalog} onSaveCatalog={saveCatalog} showToast={showToast} />
+        )}
+      </div>
+
+      <BottomNav screen={screen} setScreen={setScreen} />
+
+      {authOpen && (
+        <AuthModal
+          onClose={() => setAuthOpen(false)}
+          onLogin={handleLogin}
+          onRegister={handleRegister}
+          onAdminRegister={handleAdminRegister}
+        />
+      )}
+      {depositOpen && session && (
+        <DepositModal catalog={catalog} onClose={() => setDepositOpen(false)} onSubmit={submitDeposit} />
+      )}
+      {buyOpen && (
+        <BuyModal pack={buyOpen.pack} game={buyOpen.game} profile={profile} onClose={() => setBuyOpen(null)} onConfirm={() => submitPurchase(buyOpen.pack, buyOpen.game)} />
+      )}
+      {toast && <Toast message={toast} />}
+    </div>
+  );
+}
+
+// ---------- Header ----------
+function Header({ catalog, profile, onAuthClick, onLogout, onAdminClick }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 18px', borderBottom: '1px solid #1A1F33' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {catalog.logo_url ? (
+          <img src={catalog.logo_url} alt="logo" style={{ width: 34, height: 34, borderRadius: 10, objectFit: 'cover' }} />
+        ) : (
+          <div style={{ width: 34, height: 34, borderRadius: 10, background: 'linear-gradient(135deg, #7B2FF7, #F72585)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Gem size={18} color="#fff" />
+          </div>
+        )}
+        <div>
+          <div style={{ fontWeight: 800, fontSize: 17, letterSpacing: 0.3 }}>{catalog.brand_name}</div>
+          <div style={{ fontSize: 9, color: '#6B7280', letterSpacing: 1, marginTop: -3 }}>HAÏTI</div>
+        </div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {profile?.is_admin && (
+          <button onClick={onAdminClick} style={{ background: '#7B2FF722', border: '1px solid #7B2FF755', borderRadius: 20, padding: '8px 10px', display: 'flex', alignItems: 'center', gap: 4, color: '#B794F6' }}>
+            <Shield size={14} />
+          </button>
+        )}
+        {profile ? (
+          <button onClick={onLogout} style={{ background: '#1A1F33', border: 'none', borderRadius: 20, padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 6, color: '#F5F6FA', fontSize: 13, fontWeight: 600 }}>
+            <User size={14} /> {profile.name?.split(' ')[0]} <LogOut size={13} color="#6B7280" />
+          </button>
+        ) : (
+          <button onClick={onAuthClick} style={{ background: 'linear-gradient(135deg, #5B5FEF, #7B2FF7)', border: 'none', borderRadius: 20, padding: '9px 16px', color: '#fff', fontSize: 13, fontWeight: 700 }}>
+            Connexion
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Home Screen ----------
+function HomeScreen({ catalog, onSelectGame }) {
+  const games = catalog.games;
+  return (
+    <div style={{ padding: 18 }}>
+      <div style={{ position: 'relative', marginBottom: 18 }}>
+        <input placeholder="Rechercher un jeu..." style={{ width: '100%', padding: '13px 16px 13px 42px', borderRadius: 14, background: '#141829', border: '1px solid #232842', color: '#F5F6FA', fontSize: 14, outline: 'none' }} />
+        <span style={{ position: 'absolute', left: 14, top: 13, color: '#6B7280' }}>🔍</span>
+      </div>
+
+      <div style={{ borderRadius: 18, padding: 20, marginBottom: 24, position: 'relative', overflow: 'hidden', background: 'linear-gradient(135deg, #1A1040, #3A0F5F)', border: '1px solid #2E1F5E' }}>
+        <div style={{ fontSize: 11, color: '#B794F6', fontWeight: 700, letterSpacing: 1, marginBottom: 6 }}>RECHARGE INSTANTANÉE</div>
+        <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 6, lineHeight: 1.3 }}>Diamants & UC livrés vite</div>
+        <div style={{ fontSize: 13, color: '#C4C9DE', marginBottom: 16 }}>Dépose via MonCash ou NatCash, reçois ton crédit rapidement.</div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {games.map(g => (
+            <div key={g.id} style={{ width: 32, height: 32, borderRadius: 8, background: g.color, opacity: 0.85, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800, color: '#0B0E1A' }}>{g.name[0]}</div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 14 }}>Jeux Disponibles</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        {games.map(game => (
+          <button key={game.id} onClick={() => onSelectGame(game)} style={{ background: '#141829', border: '1px solid #232842', borderRadius: 16, padding: 0, overflow: 'hidden', textAlign: 'left' }}>
+            <div style={{ height: 90, background: game.imgUrl ? `url(${game.imgUrl}) center/cover` : `linear-gradient(135deg, ${game.color}55, #0B0E1A)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {!game.imgUrl && <Gem size={30} color={game.color} />}
+            </div>
+            <div style={{ padding: '10px 12px 12px' }}>
+              <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>{game.name}</div>
+              <div style={{ fontSize: 11, color: '#6B7280' }}>À partir de {fmt(game.packs[0]?.price)}</div>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Boutique Screen ----------
+function BoutiqueScreen({ catalog, selectedGame, setSelectedGame, onBuy }) {
+  const games = catalog.games;
+  const game = (selectedGame && games.find(g => g.id === selectedGame.id)) || games[0];
+  if (!game) return null;
+  return (
+    <div style={{ padding: 18 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 20, overflowX: 'auto' }}>
+        {games.map(g => (
+          <button key={g.id} onClick={() => setSelectedGame(g)} style={{
+            padding: '9px 16px', borderRadius: 20, whiteSpace: 'nowrap',
+            border: g.id === game.id ? 'none' : '1px solid #232842',
+            background: g.id === game.id ? `linear-gradient(135deg, ${g.color}, ${g.color}99)` : '#141829',
+            color: g.id === game.id ? '#0B0E1A' : '#C4C9DE', fontWeight: 700, fontSize: 13
+          }}>{g.name}</button>
+        ))}
+      </div>
+
+      <div style={{ borderRadius: 16, padding: 20, marginBottom: 20, background: game.imgUrl ? `linear-gradient(135deg, ${game.color}55, #141829cc), url(${game.imgUrl}) center/cover` : `linear-gradient(135deg, ${game.color}33, #141829)`, border: `1px solid ${game.color}44` }}>
+        <div style={{ fontWeight: 800, fontSize: 19 }}>{game.name}</div>
+        <div style={{ fontSize: 12, color: '#C4C9DE', marginTop: 4 }}>Choisis ton pack, le crédit arrive directement sur ton compte en jeu</div>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {game.packs.map(pack => (
+          <button key={pack.id} onClick={() => onBuy(pack, game)} style={{ background: '#141829', border: '1px solid #232842', borderRadius: 14, padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ width: 40, height: 40, borderRadius: 10, background: `${game.color}22`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Gem size={18} color={game.color} />
+              </div>
+              <div style={{ textAlign: 'left' }}>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>{pack.label}</div>
+                <div style={{ fontSize: 12, color: '#6B7280' }}>Livraison rapide</div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <div style={{ fontWeight: 800, fontSize: 14, color: game.color }}>{fmt(pack.price)}</div>
+              <ChevronRight size={16} color="#6B7280" />
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Promos Screen ----------
+function PromosScreen() {
+  return (
+    <div style={{ padding: 18 }}>
+      <div style={{ fontWeight: 800, fontSize: 19, marginBottom: 16 }}>Promos</div>
+      <div style={{ borderRadius: 16, padding: 40, textAlign: 'center', background: '#141829', border: '1px solid #232842' }}>
+        <Tag size={32} color="#6B7280" style={{ margin: '0 auto 12px' }} />
+        <div style={{ color: '#9CA3AF', fontSize: 14 }}>Aucune promo active pour le moment.</div>
+        <div style={{ color: '#6B7280', fontSize: 12, marginTop: 4 }}>Reviens bientôt pour des offres spéciales !</div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Historique Screen ----------
+function HistoriqueScreen({ history, session, onAuthClick }) {
+  if (!session) return <LoggedOutState onAuthClick={onAuthClick} text="Connecte-toi pour voir ton historique" />;
+  const statusColor = { pending: '#F2A900', completed: '#22C55E', rejected: '#EF4444' };
+  const statusLabel = { pending: 'En attente', completed: 'Complété', rejected: 'Rejeté' };
+  return (
+    <div style={{ padding: 18 }}>
+      <div style={{ fontWeight: 800, fontSize: 19, marginBottom: 16 }}>Historique</div>
+      {history.length === 0 ? (
+        <div style={{ borderRadius: 16, padding: 40, textAlign: 'center', background: '#141829', border: '1px solid #232842' }}>
+          <Clock size={32} color="#6B7280" style={{ margin: '0 auto 12px' }} />
+          <div style={{ color: '#9CA3AF', fontSize: 14 }}>Aucune transaction pour le moment.</div>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {history.map(h => (
+            <div key={h.id} style={{ background: '#141829', border: '1px solid #232842', borderRadius: 14, padding: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: h.type === 'deposit' ? '#22C55E22' : '#5B5FEF22', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {h.type === 'deposit' ? <ArrowDownRight size={16} color="#22C55E" /> : <ArrowUpRight size={16} color="#5B5FEF" />}
+                </div>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>{h.type === 'deposit' ? `Dépôt ${h.method}` : `${h.game} — ${h.pack_label}`}</div>
+                  <div style={{ fontSize: 11, color: '#6B7280' }}>{new Date(h.created_at).toLocaleString('fr-HT')}</div>
+                </div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontWeight: 800, fontSize: 13, color: h.type === 'deposit' ? '#22C55E' : '#F5F6FA' }}>{h.type === 'deposit' ? '+' : '-'}{fmt(h.amount)}</div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: statusColor[h.status] }}>{statusLabel[h.status]}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- Wallet Screen ----------
+function WalletScreen({ profile, history, session, onAuthClick, onDeposit }) {
+  if (!session || !profile) return <LoggedOutState onAuthClick={onAuthClick} text="Connecte-toi pour voir ton wallet" />;
+  const pendingDeposits = history.filter(h => h.type === 'deposit' && h.status === 'pending');
+  return (
+    <div style={{ padding: 18 }}>
+      <div style={{ borderRadius: 20, padding: 24, marginBottom: 20, background: 'linear-gradient(135deg, #5B5FEF, #7B2FF7)', position: 'relative', overflow: 'hidden' }}>
+        <div style={{ fontSize: 12, color: '#E0E1FF', fontWeight: 600, marginBottom: 6 }}>SOLDE DISPONIBLE</div>
+        <div style={{ fontSize: 32, fontWeight: 800, color: '#fff', marginBottom: 20 }}>{fmt(profile.balance)}</div>
+        <button onClick={onDeposit} style={{ background: '#fff', color: '#5B5FEF', border: 'none', borderRadius: 12, padding: '11px 20px', fontWeight: 700, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Plus size={16} /> Faire un dépôt
+        </button>
+      </div>
+
+      <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 12 }}>Dépôts en attente</div>
+      {pendingDeposits.length === 0 ? (
+        <div style={{ color: '#6B7280', fontSize: 13, padding: 8 }}>Aucun dépôt en attente.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {pendingDeposits.map(h => (
+            <div key={h.id} style={{ background: '#141829', border: '1px solid #232842', borderRadius: 12, padding: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>{h.method} · {fmt(h.amount)}</div>
+                <div style={{ fontSize: 11, color: '#6B7280' }}>ID: {h.tx_id}</div>
+              </div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#F2A900' }}>En attente</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LoggedOutState({ onAuthClick, text }) {
+  return (
+    <div style={{ padding: 18 }}>
+      <div style={{ borderRadius: 16, padding: 40, textAlign: 'center', background: '#141829', border: '1px solid #232842' }}>
+        <User size={32} color="#6B7280" style={{ margin: '0 auto 12px' }} />
+        <div style={{ color: '#9CA3AF', fontSize: 14, marginBottom: 16 }}>{text}</div>
+        <button onClick={onAuthClick} style={{ background: 'linear-gradient(135deg, #5B5FEF, #7B2FF7)', border: 'none', borderRadius: 12, padding: '11px 20px', color: '#fff', fontWeight: 700, fontSize: 13 }}>Se connecter</button>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Admin Screen ----------
+function AdminScreen({ catalog, onSaveCatalog, showToast }) {
+  const [draft, setDraft] = useState(catalog);
+  const [dirty, setDirty] = useState(false);
+
+  useEffect(() => { setDraft(catalog); setDirty(false); }, [catalog]);
+
+  const updateBrand = (field, value) => { setDraft(d => ({ ...d, [field]: value })); setDirty(true); };
+  const updateGame = (gameId, field, value) => {
+    setDraft(d => ({ ...d, games: d.games.map(g => g.id === gameId ? { ...g, [field]: value } : g) }));
+    setDirty(true);
+  };
+  const updatePackPrice = (gameId, packId, price) => {
+    setDraft(d => ({
+      ...d,
+      games: d.games.map(g => g.id === gameId
+        ? { ...g, packs: g.packs.map(p => p.id === packId ? { ...p, price: Number(price) || 0 } : p) }
+        : g)
+    }));
+    setDirty(true);
+  };
+
+  const handleSave = async () => { await onSaveCatalog(draft); setDirty(false); };
+
+  return (
+    <div style={{ padding: 18 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <Shield size={18} color="#B794F6" />
+        <div style={{ fontWeight: 800, fontSize: 19 }}>Panneau Admin</div>
+      </div>
+      <div style={{ fontSize: 12, color: '#6B7280', marginBottom: 20 }}>Ces changements sont visibles par tous les clients.</div>
+
+      <SectionTitle>Identité de la marque</SectionTitle>
+      <AdminField label="Nom de la marque" value={draft.brand_name} onChange={v => updateBrand('brand_name', v)} />
+      <AdminField label="URL du logo" placeholder="https://..." value={draft.logo_url} onChange={v => updateBrand('logo_url', v)} icon={ImageIcon} />
+      {draft.logo_url && (
+        <div style={{ marginBottom: 16 }}>
+          <img src={draft.logo_url} alt="preview logo" style={{ width: 50, height: 50, borderRadius: 12, objectFit: 'cover', border: '1px solid #232842' }} />
+        </div>
+      )}
+
+      <SectionTitle>Numéros marchands</SectionTitle>
+      <AdminField label="Numéro MonCash" value={draft.merchant_moncash} onChange={v => updateBrand('merchant_moncash', v)} />
+      <AdminField label="Numéro NatCash" value={draft.merchant_natcash} onChange={v => updateBrand('merchant_natcash', v)} />
+
+      <SectionTitle>Jeux & Prix</SectionTitle>
+      {draft.games.map(game => (
+        <div key={game.id} style={{ background: '#141829', border: '1px solid #232842', borderRadius: 14, padding: 14, marginBottom: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 9, background: game.imgUrl ? `url(${game.imgUrl}) center/cover` : `${game.color}33`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {!game.imgUrl && <Gem size={16} color={game.color} />}
+            </div>
+            <div style={{ fontWeight: 800, fontSize: 15 }}>{game.name}</div>
+          </div>
+
+          <AdminField label="URL de l'image du jeu" placeholder="https://..." value={game.imgUrl} onChange={v => updateGame(game.id, 'imgUrl', v)} icon={ImageIcon} small />
+
+          <div style={{ fontSize: 11, color: '#6B7280', margin: '10px 0 6px', fontWeight: 700, letterSpacing: 0.5 }}>PRIX DES PACKS (HTG)</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {game.packs.map(pack => (
+              <div key={pack.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                <div style={{ fontSize: 13, color: '#C4C9DE', flex: 1 }}>{pack.label}</div>
+                <input type="number" value={pack.price} onChange={e => updatePackPrice(game.id, pack.id, e.target.value)} style={{ width: 100, padding: '8px 10px', borderRadius: 8, background: '#0F1220', border: '1px solid #232842', color: '#F5F6FA', fontSize: 13, textAlign: 'right', outline: 'none' }} />
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      <button onClick={handleSave} disabled={!dirty} style={{
+        width: '100%', background: dirty ? 'linear-gradient(135deg, #5B5FEF, #7B2FF7)' : '#232842',
+        border: 'none', borderRadius: 12, padding: '14px', color: '#fff', fontWeight: 700, fontSize: 14,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 6, marginBottom: 20
+      }}>
+        <Save size={16} /> {dirty ? 'Enregistrer les modifications' : 'Aucun changement'}
+      </button>
+    </div>
+  );
+}
+
+function SectionTitle({ children }) {
+  return <div style={{ fontSize: 13, fontWeight: 800, color: '#B794F6', marginBottom: 10, marginTop: 4 }}>{children}</div>;
+}
+
+function AdminField({ label, value, onChange, placeholder, icon: Icon, small }) {
+  return (
+    <div style={{ marginBottom: small ? 8 : 14 }}>
+      <label style={{ fontSize: 11, color: '#9CA3AF', marginBottom: 5, display: 'block' }}>{label}</label>
+      <div style={{ position: 'relative' }}>
+        {Icon && <Icon size={14} color="#6B7280" style={{ position: 'absolute', left: 12, top: 12 }} />}
+        <input value={value || ''} placeholder={placeholder} onChange={e => onChange(e.target.value)} style={{ width: '100%', padding: Icon ? '10px 12px 10px 34px' : '10px 12px', borderRadius: 10, background: '#0F1220', border: '1px solid #232842', color: '#F5F6FA', fontSize: 13, outline: 'none' }} />
+      </div>
+    </div>
+  );
+}
+
+// ---------- Bottom Nav ----------
+function BottomNav({ screen, setScreen }) {
+  const items = [
+    { id: 'home', label: 'Accueil', icon: Home },
+    { id: 'boutique', label: 'Boutique', icon: ShoppingCart },
+    { id: 'promos', label: 'Promos', icon: Tag },
+    { id: 'historique', label: 'Historique', icon: Clock },
+    { id: 'wallet', label: 'Wallet', icon: Wallet },
+  ];
+  return (
+    <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: '#0F1220', borderTop: '1px solid #1A1F33', display: 'flex', padding: '10px 4px 14px' }}>
+      {items.map(item => {
+        const Icon = item.icon;
+        const active = screen === item.id;
+        return (
+          <button key={item.id} onClick={() => setScreen(item.id)} style={{ flex: 1, background: 'none', border: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, color: active ? '#5B5FEF' : '#6B7280' }}>
+            <Icon size={20} />
+            <span style={{ fontSize: 10, fontWeight: active ? 700 : 500 }}>{item.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------- Auth Modal ----------
+function AuthModal({ onClose, onLogin, onRegister, onAdminRegister }) {
+  const [mode, setMode] = useState('login'); // login, register, adminCreate
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [masterKey, setMasterKey] = useState('');
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async () => {
+    setError('');
+    if (!email || !password) { setError('Remplis tous les champs'); return; }
+    if ((mode === 'register' || mode === 'adminCreate') && (!name || !phone)) { setError('Entre ton nom et ton téléphone'); return; }
+    if (mode === 'adminCreate' && !masterKey) { setError('Entre la clé maîtresse'); return; }
+    setSubmitting(true);
+    let ok;
+    if (mode === 'login') ok = await onLogin(email, password);
+    else if (mode === 'adminCreate') ok = await onAdminRegister(email, password, name, phone, masterKey);
+    else ok = await onRegister(email, password, name, phone);
+    setSubmitting(false);
+    if (!ok) setError("Une erreur s'est produite. Vérifie tes informations.");
+  };
+
+  return (
+    <ModalOverlay onClose={onClose}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+        <TabButton active={mode === 'login'} onClick={() => setMode('login')}>Connexion</TabButton>
+        <TabButton active={mode === 'register'} onClick={() => setMode('register')}>Créer un compte</TabButton>
+      </div>
+
+      {mode === 'adminCreate' && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 14, color: '#B794F6', fontSize: 12, fontWeight: 700 }}>
+          <Shield size={14} /> Création compte administrateur
+        </div>
+      )}
+
+      {(mode === 'register' || mode === 'adminCreate') && (
+        <>
+          <FieldInput icon={User} placeholder="Ton nom" value={name} onChange={setName} />
+          <FieldInput icon={Phone} placeholder="Numéro de téléphone" value={phone} onChange={setPhone} type="tel" />
+        </>
+      )}
+      <FieldInput icon={Mail} placeholder="Email" value={email} onChange={setEmail} type="email" />
+      <FieldInput icon={Lock} placeholder="Mot de passe" value={password} onChange={setPassword} type="password" />
+      {mode === 'adminCreate' && <FieldInput icon={Shield} placeholder="Clé maîtresse" value={masterKey} onChange={setMasterKey} type="password" />}
+
+      {error && <div style={{ color: '#EF4444', fontSize: 12, marginBottom: 10 }}>{error}</div>}
+
+      <button onClick={handleSubmit} disabled={submitting} style={{
+        width: '100%', background: mode === 'adminCreate' ? 'linear-gradient(135deg, #7B2FF7, #F72585)' : 'linear-gradient(135deg, #5B5FEF, #7B2FF7)',
+        border: 'none', borderRadius: 12, padding: '13px', color: '#fff', fontWeight: 700, fontSize: 14, marginTop: 6, opacity: submitting ? 0.7 : 1
+      }}>
+        {submitting ? 'Chargement...' : mode === 'login' ? 'Se connecter' : mode === 'adminCreate' ? 'Créer le compte admin' : 'Créer mon compte'}
+      </button>
+
+      {mode !== 'adminCreate' && (
+        <button onClick={() => setMode('adminCreate')} style={{ width: '100%', background: 'none', border: 'none', color: '#4B5065', fontSize: 11, marginTop: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+          <Shield size={11} /> Espace administrateur
+        </button>
+      )}
+      {mode === 'adminCreate' && (
+        <button onClick={() => setMode('login')} style={{ width: '100%', background: 'none', border: 'none', color: '#6B7280', fontSize: 12, marginTop: 10 }}>
+          Retour
+        </button>
+      )}
+    </ModalOverlay>
+  );
+}
+
+function FieldInput({ icon: Icon, placeholder, value, onChange, type = 'text' }) {
+  return (
+    <div style={{ position: 'relative', marginBottom: 12 }}>
+      <Icon size={16} color="#6B7280" style={{ position: 'absolute', left: 14, top: 14 }} />
+      <input type={type} placeholder={placeholder} value={value} onChange={e => onChange(e.target.value)} style={{ width: '100%', padding: '13px 14px 13px 40px', borderRadius: 12, background: '#0F1220', border: '1px solid #232842', color: '#F5F6FA', fontSize: 14, outline: 'none' }} />
+    </div>
+  );
+}
+
+function TabButton({ active, onClick, children }) {
+  return (
+    <button onClick={onClick} style={{ flex: 1, padding: '10px', borderRadius: 10, border: 'none', background: active ? '#5B5FEF' : '#0F1220', color: active ? '#fff' : '#9CA3AF', fontWeight: 700, fontSize: 13 }}>
+      {children}
+    </button>
+  );
+}
+
+// ---------- Deposit Modal ----------
+function DepositModal({ catalog, onClose, onSubmit }) {
+  const [method, setMethod] = useState('MonCash');
+  const [amount, setAmount] = useState('');
+  const [txId, setTxId] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  const merchantNumber = method === 'MonCash' ? catalog.merchant_moncash : catalog.merchant_natcash;
+
+  const copyNumber = () => {
+    navigator.clipboard?.writeText(merchantNumber);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  const canSubmit = amount && Number(amount) > 0 && txId.trim().length > 0;
+
+  return (
+    <ModalOverlay onClose={onClose} title="Faire un dépôt">
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        <TabButton active={method === 'MonCash'} onClick={() => setMethod('MonCash')}>MonCash</TabButton>
+        <TabButton active={method === 'NatCash'} onClick={() => setMethod('NatCash')}>NatCash</TabButton>
+      </div>
+
+      <div style={{ background: '#0F1220', border: '1px solid #232842', borderRadius: 12, padding: 14, marginBottom: 16 }}>
+        <div style={{ fontSize: 12, color: '#9CA3AF', marginBottom: 8 }}>1. Envoie ton montant vers ce numéro {method} :</div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ fontWeight: 800, fontSize: 16 }}>{merchantNumber}</div>
+          <button onClick={copyNumber} style={{ background: '#1A1F33', border: 'none', borderRadius: 8, padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 4, color: copied ? '#22C55E' : '#9CA3AF', fontSize: 11, fontWeight: 700 }}>
+            {copied ? <Check size={12} /> : <Copy size={12} />} {copied ? 'Copié' : 'Copier'}
+          </button>
+        </div>
+        <div style={{ fontSize: 11, color: '#6B7280', marginTop: 10 }}>2. Entre le montant envoyé et l'ID de transaction reçu par SMS ci-dessous.</div>
+      </div>
+
+      <div style={{ marginBottom: 4 }}>
+        <label style={{ fontSize: 12, color: '#9CA3AF', marginBottom: 6, display: 'block' }}>Montant envoyé (HTG)</label>
+        <input type="number" placeholder="Ex: 500" value={amount} onChange={e => setAmount(e.target.value)} style={{ width: '100%', padding: '13px 14px', borderRadius: 12, marginBottom: 12, background: '#0F1220', border: '1px solid #232842', color: '#F5F6FA', fontSize: 14, outline: 'none' }} />
+      </div>
+      <div style={{ marginBottom: 16 }}>
+        <label style={{ fontSize: 12, color: '#9CA3AF', marginBottom: 6, display: 'block' }}>ID de transaction</label>
+        <input placeholder="Ex: TX123456789" value={txId} onChange={e => setTxId(e.target.value)} style={{ width: '100%', padding: '13px 14px', borderRadius: 12, background: '#0F1220', border: '1px solid #232842', color: '#F5F6FA', fontSize: 14, outline: 'none' }} />
+      </div>
+
+      <button onClick={() => canSubmit && onSubmit({ method, amount, txId })} disabled={!canSubmit} style={{ width: '100%', background: canSubmit ? 'linear-gradient(135deg, #5B5FEF, #7B2FF7)' : '#232842', border: 'none', borderRadius: 12, padding: '13px', color: '#fff', fontWeight: 700, fontSize: 14 }}>
+        Envoyer la demande de dépôt
+      </button>
+    </ModalOverlay>
+  );
+}
+
+// ---------- Buy Modal ----------
+function BuyModal({ pack, game, profile, onClose, onConfirm }) {
+  const insufficient = profile && profile.balance < pack.price;
+  return (
+    <ModalOverlay onClose={onClose} title="Confirmer l'achat">
+      <div style={{ background: '#0F1220', border: '1px solid #232842', borderRadius: 14, padding: 16, marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+          <div style={{ width: 44, height: 44, borderRadius: 12, background: `${game.color}22`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Gem size={20} color={game.color} />
+          </div>
+          <div>
+            <div style={{ fontWeight: 800, fontSize: 15 }}>{game.name}</div>
+            <div style={{ fontSize: 13, color: '#9CA3AF' }}>{pack.label}</div>
+          </div>
+        </div>
+        <div style={{ borderTop: '1px solid #232842', paddingTop: 12, display: 'flex', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 13, color: '#9CA3AF' }}>Prix</span>
+          <span style={{ fontWeight: 800, fontSize: 15 }}>{fmt(pack.price)}</span>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, fontSize: 13 }}>
+        <span style={{ color: '#9CA3AF' }}>Ton solde</span>
+        <span style={{ fontWeight: 700, color: insufficient ? '#EF4444' : '#22C55E' }}>{fmt(profile?.balance)}</span>
+      </div>
+
+      {insufficient && <div style={{ fontSize: 12, color: '#F2A900', marginBottom: 12 }}>Solde insuffisant. Tu seras redirigé vers le dépôt.</div>}
+
+      <button onClick={onConfirm} style={{ width: '100%', background: 'linear-gradient(135deg, #5B5FEF, #7B2FF7)', border: 'none', borderRadius: 12, padding: '13px', color: '#fff', fontWeight: 700, fontSize: 14 }}>
+        {insufficient ? 'Faire un dépôt' : "Confirmer l'achat"}
+      </button>
+    </ModalOverlay>
+  );
+}
+
+// ---------- Modal Overlay ----------
+function ModalOverlay({ children, onClose, title }) {
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 50 }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ width: '100%', maxWidth: 480, background: '#141829', borderRadius: '20px 20px 0 0', padding: 20, borderTop: '1px solid #232842', maxHeight: '85vh', overflowY: 'auto' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <div style={{ fontWeight: 800, fontSize: 16 }}>{title}</div>
+          <button onClick={onClose} style={{ background: '#0F1220', border: 'none', borderRadius: 8, padding: 6 }}>
+            <X size={16} color="#9CA3AF" />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Toast ----------
+function Toast({ message }) {
+  return (
+    <div style={{ position: 'fixed', bottom: 100, left: '50%', transform: 'translateX(-50%)', background: '#1A1F33', border: '1px solid #232842', borderRadius: 12, padding: '10px 18px', fontSize: 13, fontWeight: 600, zIndex: 100, whiteSpace: 'nowrap' }}>
+      {message}
+    </div>
+  );
+}
