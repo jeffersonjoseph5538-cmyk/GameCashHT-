@@ -10,29 +10,33 @@ const DEFAULT_CATALOG = {
   games: [
     {
       id: 'freefire', name: 'Free Fire', color: '#FF6A00', imgUrl: '',
+      gameCode: 'freefire_latam', requiresServerId: false,
       packs: [
-        { id: 'ff1', label: '100 Diamants', price: 150 },
-        { id: 'ff2', label: '310 Diamants', price: 450 },
-        { id: 'ff3', label: '520 Diamants', price: 750 },
-        { id: 'ff4', label: '1060 Diamants', price: 1450 },
+        { id: 'ff1', label: '110 Diamants', price: 150, g2code: '110' },
+        { id: 'ff2', label: '341 Diamants', price: 450, g2code: '341' },
+        { id: 'ff3', label: '572 Diamants', price: 750, g2code: '572' },
+        { id: 'ff4', label: '1166 Diamants', price: 1450, g2code: '1166' },
+        { id: 'ff5', label: 'Booyah Pass', price: 800, g2code: 'Booyah Pass' },
       ]
     },
     {
       id: 'mlbb', name: 'Mobile Legends', color: '#00D2FF', imgUrl: '',
+      gameCode: 'mlbb', requiresServerId: true,
       packs: [
-        { id: 'ml1', label: '86 Diamants', price: 140 },
-        { id: 'ml2', label: '172 Diamants', price: 280 },
-        { id: 'ml3', label: '429 Diamants', price: 650 },
-        { id: 'ml4', label: '878 Diamants', price: 1300 },
+        { id: 'ml1', label: '55 Diamants', price: 140, g2code: '55' },
+        { id: 'ml2', label: '172 Diamants', price: 350, g2code: '172' },
+        { id: 'ml3', label: '429 Diamants', price: 850, g2code: '429' },
+        { id: 'ml4', label: '878 Diamants', price: 1700, g2code: '878' },
       ]
     },
     {
       id: 'pubg', name: 'PUBG Mobile', color: '#F2A900', imgUrl: '',
+      gameCode: 'pubgm', requiresServerId: false,
       packs: [
-        { id: 'pb1', label: '60 UC', price: 130 },
-        { id: 'pb2', label: '325 UC', price: 600 },
-        { id: 'pb3', label: '660 UC', price: 1150 },
-        { id: 'pb4', label: '1800 UC', price: 2900 },
+        { id: 'pb1', label: '60 UC', price: 130, g2code: '60' },
+        { id: 'pb2', label: '660 UC', price: 1300, g2code: '660' },
+        { id: 'pb3', label: '1800 UC', price: 3250, g2code: '1800' },
+        { id: 'pb4', label: '3850 UC', price: 6500, g2code: '3850' },
       ]
     }
   ]
@@ -46,6 +50,7 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null); // row from `users` table
   const [history, setHistory] = useState([]);
+  const [pendingTx, setPendingTx] = useState([]); // toutes les transactions en attente (vue admin)
   const [catalog, setCatalog] = useState(DEFAULT_CATALOG);
   const [authOpen, setAuthOpen] = useState(false);
   const [selectedGame, setSelectedGame] = useState(null);
@@ -100,7 +105,19 @@ export default function App() {
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
     setHistory(txs || []);
+    if (userRow?.is_admin) {
+      await loadPendingTransactions();
+    }
     setLoading(false);
+  };
+
+  const loadPendingTransactions = async () => {
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('*, users:user_id(name, phone)')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: true });
+    if (!error) setPendingTx(data || []);
   };
 
   const refreshProfile = async () => {
@@ -130,7 +147,7 @@ export default function App() {
     return true;
   };
 
-  const ADMIN_MASTER_KEY = 'GameCashHT-2026'; // ⚠️ change cette clé avant mise en ligne, garde-la secrète
+  const ADMIN_MASTER_KEY = 'Rk9!vLp2-Xht7Qm$4Zn'; // ⚠️ clé secrète — garde-la, ne la partage pas
 
   const handleAdminRegister = async (email, password, name, phone, masterKey) => {
     if (masterKey !== ADMIN_MASTER_KEY) { showToast('Clé maîtresse incorrecte'); return false; }
@@ -164,7 +181,7 @@ export default function App() {
     refreshProfile();
   };
 
-  const submitPurchase = async (pack, game) => {
+  const submitPurchase = async (pack, game, playerId, serverId) => {
     if (!profile) { setAuthOpen(true); return; }
     if (profile.balance < pack.price) {
       showToast("Solde insuffisant. Fais un dépôt d'abord.");
@@ -172,9 +189,14 @@ export default function App() {
       setDepositOpen(true);
       return;
     }
-    const { error: txError } = await supabase.from('transactions').insert({
-      user_id: session.user.id, type: 'purchase', game: game.name, pack_label: pack.label, amount: pack.price, status: 'pending'
-    });
+    const { data: txRow, error: txError } = await supabase
+      .from('transactions')
+      .insert({
+        user_id: session.user.id, type: 'purchase', game: game.name, pack_label: pack.label,
+        amount: pack.price, status: 'pending', player_id: playerId, server_id: serverId || null
+      })
+      .select()
+      .single();
     if (txError) { showToast(txError.message); return; }
 
     const { error: balError } = await supabase
@@ -184,7 +206,33 @@ export default function App() {
     if (balError) { showToast(balError.message); return; }
 
     setBuyOpen(null);
-    showToast('Commande envoyée ! Livraison sous peu.');
+    showToast('Commande envoyée, livraison en cours...');
+    refreshProfile();
+
+    // Déclenche la livraison automatique via G2Bulk
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      const res = await fetch(`https://fyxzxjlldbnftbbhiosm.supabase.co/functions/v1/place-topup-order`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({
+          transactionId: txRow.id,
+          gameCode: game.gameCode,
+          catalogueName: pack.g2code,
+          playerId,
+          serverId: serverId || undefined
+        })
+      });
+      const result = await res.json();
+      if (!res.ok || result.error) {
+        showToast(`Livraison en attente: ${result.error || 'vérification manuelle nécessaire'}`);
+      } else {
+        showToast('Livraison en cours, tu recevras ton crédit sous peu !');
+      }
+    } catch (e) {
+      showToast('Commande enregistrée, livraison en cours de traitement.');
+    }
     refreshProfile();
   };
 
@@ -194,6 +242,46 @@ export default function App() {
     if (error) { showToast(error.message); return; }
     setCatalog(c);
     showToast('Modifications enregistrées et visibles par tous.');
+  };
+
+  // ---------- Admin: approve/reject transactions ----------
+  const approveDeposit = async (tx) => {
+    const { data: userRow } = await supabase.from('users').select('balance').eq('id', tx.user_id).maybeSingle();
+    if (!userRow) { showToast("Client introuvable"); return; }
+    const { error: balErr } = await supabase
+      .from('users')
+      .update({ balance: Number(userRow.balance) + Number(tx.amount) })
+      .eq('id', tx.user_id);
+    if (balErr) { showToast(balErr.message); return; }
+    const { error: txErr } = await supabase.from('transactions').update({ status: 'completed' }).eq('id', tx.id);
+    if (txErr) { showToast(txErr.message); return; }
+    showToast('Dépôt approuvé, solde crédité.');
+    await loadPendingTransactions();
+  };
+
+  const rejectDeposit = async (tx) => {
+    const { error } = await supabase.from('transactions').update({ status: 'rejected' }).eq('id', tx.id);
+    if (error) { showToast(error.message); return; }
+    showToast('Dépôt rejeté.');
+    await loadPendingTransactions();
+  };
+
+  const approvePurchase = async (tx) => {
+    const { error } = await supabase.from('transactions').update({ status: 'completed' }).eq('id', tx.id);
+    if (error) { showToast(error.message); return; }
+    showToast('Commande marquée comme livrée.');
+    await loadPendingTransactions();
+  };
+
+  const rejectPurchase = async (tx) => {
+    const { data: userRow } = await supabase.from('users').select('balance').eq('id', tx.user_id).maybeSingle();
+    if (userRow) {
+      await supabase.from('users').update({ balance: Number(userRow.balance) + Number(tx.amount) }).eq('id', tx.user_id);
+    }
+    const { error } = await supabase.from('transactions').update({ status: 'rejected' }).eq('id', tx.id);
+    if (error) { showToast(error.message); return; }
+    showToast('Commande rejetée, client remboursé.');
+    await loadPendingTransactions();
   };
 
   if (loading) {
@@ -237,7 +325,16 @@ export default function App() {
           <WalletScreen profile={profile} history={history} session={session} onAuthClick={() => setAuthOpen(true)} onDeposit={() => setDepositOpen(true)} />
         )}
         {screen === 'admin' && profile?.is_admin && (
-          <AdminScreen catalog={catalog} onSaveCatalog={saveCatalog} showToast={showToast} />
+          <AdminScreen
+            catalog={catalog}
+            onSaveCatalog={saveCatalog}
+            showToast={showToast}
+            pendingTx={pendingTx}
+            onApproveDeposit={approveDeposit}
+            onRejectDeposit={rejectDeposit}
+            onApprovePurchase={approvePurchase}
+            onRejectPurchase={rejectPurchase}
+          />
         )}
       </div>
 
@@ -255,7 +352,7 @@ export default function App() {
         <DepositModal catalog={catalog} onClose={() => setDepositOpen(false)} onSubmit={submitDeposit} />
       )}
       {buyOpen && (
-        <BuyModal pack={buyOpen.pack} game={buyOpen.game} profile={profile} onClose={() => setBuyOpen(null)} onConfirm={() => submitPurchase(buyOpen.pack, buyOpen.game)} />
+        <BuyModal pack={buyOpen.pack} game={buyOpen.game} profile={profile} onClose={() => setBuyOpen(null)} onConfirm={(playerId, serverId) => submitPurchase(buyOpen.pack, buyOpen.game, playerId, serverId)} />
       )}
       {toast && <Toast message={toast} />}
     </div>
@@ -483,7 +580,7 @@ function LoggedOutState({ onAuthClick, text }) {
 }
 
 // ---------- Admin Screen ----------
-function AdminScreen({ catalog, onSaveCatalog, showToast }) {
+function AdminScreen({ catalog, onSaveCatalog, showToast, pendingTx, onApproveDeposit, onRejectDeposit, onApprovePurchase, onRejectPurchase }) {
   const [draft, setDraft] = useState(catalog);
   const [dirty, setDirty] = useState(false);
 
@@ -513,6 +610,47 @@ function AdminScreen({ catalog, onSaveCatalog, showToast }) {
         <div style={{ fontWeight: 800, fontSize: 19 }}>Panneau Admin</div>
       </div>
       <div style={{ fontSize: 12, color: '#6B7280', marginBottom: 20 }}>Ces changements sont visibles par tous les clients.</div>
+
+      <SectionTitle>Transactions en attente ({pendingTx.length})</SectionTitle>
+      {pendingTx.length === 0 ? (
+        <div style={{ color: '#6B7280', fontSize: 13, padding: '8px 0 20px' }}>Aucune transaction en attente.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 }}>
+          {pendingTx.map(tx => (
+            <div key={tx.id} style={{ background: '#141829', border: '1px solid #232842', borderRadius: 14, padding: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>{tx.users?.name || 'Client inconnu'}</div>
+                  <div style={{ fontSize: 11, color: '#6B7280' }}>{tx.users?.phone}</div>
+                </div>
+                <div style={{ fontWeight: 800, fontSize: 14, color: tx.type === 'deposit' ? '#22C55E' : '#5B5FEF' }}>
+                  {fmt(tx.amount)}
+                </div>
+              </div>
+              <div style={{ fontSize: 12, color: '#C4C9DE', marginBottom: 10 }}>
+                {tx.type === 'deposit'
+                  ? `Dépôt ${tx.method} · ID transaction: ${tx.tx_id}`
+                  : `Achat: ${tx.game} — ${tx.pack_label}`}
+              </div>
+              <div style={{ fontSize: 10, color: '#6B7280', marginBottom: 10 }}>{new Date(tx.created_at).toLocaleString('fr-HT')}</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  onClick={() => tx.type === 'deposit' ? onApproveDeposit(tx) : onApprovePurchase(tx)}
+                  style={{ flex: 1, background: '#22C55E', border: 'none', borderRadius: 10, padding: '10px', color: '#fff', fontWeight: 700, fontSize: 13 }}
+                >
+                  {tx.type === 'deposit' ? 'Approuver' : 'Marquer livré'}
+                </button>
+                <button
+                  onClick={() => tx.type === 'deposit' ? onRejectDeposit(tx) : onRejectPurchase(tx)}
+                  style={{ flex: 1, background: '#EF444422', border: '1px solid #EF444455', borderRadius: 10, padding: '10px', color: '#EF4444', fontWeight: 700, fontSize: 13 }}
+                >
+                  Rejeter
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       <SectionTitle>Identité de la marque</SectionTitle>
       <AdminField label="Nom de la marque" value={draft.brand_name} onChange={v => updateBrand('brand_name', v)} />
@@ -744,7 +882,39 @@ function DepositModal({ catalog, onClose, onSubmit }) {
 
 // ---------- Buy Modal ----------
 function BuyModal({ pack, game, profile, onClose, onConfirm }) {
+  const [playerId, setPlayerId] = useState('');
+  const [serverId, setServerId] = useState('');
+  const [verifying, setVerifying] = useState(false);
+  const [verifiedName, setVerifiedName] = useState(null); // null = pas encore vérifié, '' = invalide, 'Nom' = valide
   const insufficient = profile && profile.balance < pack.price;
+
+  const idsReady = playerId.trim().length > 0 && (!game.requiresServerId || serverId.trim().length > 0);
+
+  const handleVerify = async () => {
+    setVerifying(true);
+    setVerifiedName(null);
+    try {
+      const res = await fetch(`https://fyxzxjlldbnftbbhiosm.supabase.co/functions/v1/verify-player`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gameCode: game.gameCode, playerId, serverId: serverId || undefined })
+      });
+      const data = await res.json();
+      if (data.valid) {
+        setVerifiedName(data.name || 'Joueur trouvé');
+      } else {
+        setVerifiedName('');
+      }
+    } catch (e) {
+      setVerifiedName('');
+    }
+    setVerifying(false);
+  };
+
+  const resetVerification = () => setVerifiedName(null);
+
+  const canConfirm = !insufficient && verifiedName;
+
   return (
     <ModalOverlay onClose={onClose} title="Confirmer l'achat">
       <div style={{ background: '#0F1220', border: '1px solid #232842', borderRadius: 14, padding: 16, marginBottom: 16 }}>
@@ -768,9 +938,67 @@ function BuyModal({ pack, game, profile, onClose, onConfirm }) {
         <span style={{ fontWeight: 700, color: insufficient ? '#EF4444' : '#22C55E' }}>{fmt(profile?.balance)}</span>
       </div>
 
+      {!insufficient && (
+        <>
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ fontSize: 12, color: '#9CA3AF', marginBottom: 6, display: 'block' }}>ID du joueur</label>
+            <input
+              placeholder="Ex: 123456789"
+              value={playerId}
+              onChange={e => { setPlayerId(e.target.value); resetVerification(); }}
+              style={{ width: '100%', padding: '13px 14px', borderRadius: 12, background: '#0F1220', border: '1px solid #232842', color: '#F5F6FA', fontSize: 14, outline: 'none' }}
+            />
+          </div>
+          {game.requiresServerId && (
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontSize: 12, color: '#9CA3AF', marginBottom: 6, display: 'block' }}>ID du serveur (zone)</label>
+              <input
+                placeholder="Ex: 2001"
+                value={serverId}
+                onChange={e => { setServerId(e.target.value); resetVerification(); }}
+                style={{ width: '100%', padding: '13px 14px', borderRadius: 12, background: '#0F1220', border: '1px solid #232842', color: '#F5F6FA', fontSize: 14, outline: 'none' }}
+              />
+            </div>
+          )}
+
+          {verifiedName === null && (
+            <button
+              onClick={handleVerify}
+              disabled={!idsReady || verifying}
+              style={{
+                width: '100%', background: idsReady ? '#1A1F33' : '#141829', border: '1px solid #232842',
+                borderRadius: 12, padding: '12px', color: idsReady ? '#F5F6FA' : '#6B7280', fontWeight: 700, fontSize: 13, marginBottom: 16
+              }}
+            >
+              {verifying ? 'Vérification...' : 'Vérifier le compte'}
+            </button>
+          )}
+
+          {verifiedName === '' && (
+            <div style={{ background: '#EF444422', border: '1px solid #EF444455', borderRadius: 10, padding: 10, marginBottom: 16, fontSize: 12, color: '#EF4444' }}>
+              ID introuvable. Vérifie et réessaie.
+            </div>
+          )}
+
+          {verifiedName && (
+            <div style={{ background: '#22C55E22', border: '1px solid #22C55E55', borderRadius: 10, padding: 10, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Check size={14} color="#22C55E" />
+              <span style={{ fontSize: 13, color: '#22C55E', fontWeight: 700 }}>Compte trouvé : {verifiedName}</span>
+            </div>
+          )}
+        </>
+      )}
+
       {insufficient && <div style={{ fontSize: 12, color: '#F2A900', marginBottom: 12 }}>Solde insuffisant. Tu seras redirigé vers le dépôt.</div>}
 
-      <button onClick={onConfirm} style={{ width: '100%', background: 'linear-gradient(135deg, #5B5FEF, #7B2FF7)', border: 'none', borderRadius: 12, padding: '13px', color: '#fff', fontWeight: 700, fontSize: 14 }}>
+      <button
+        onClick={() => insufficient ? onConfirm() : (canConfirm && onConfirm(playerId, serverId))}
+        disabled={!insufficient && !canConfirm}
+        style={{
+          width: '100%', background: (insufficient || canConfirm) ? 'linear-gradient(135deg, #5B5FEF, #7B2FF7)' : '#232842',
+          border: 'none', borderRadius: 12, padding: '13px', color: '#fff', fontWeight: 700, fontSize: 14
+        }}
+      >
         {insufficient ? 'Faire un dépôt' : "Confirmer l'achat"}
       </button>
     </ModalOverlay>
