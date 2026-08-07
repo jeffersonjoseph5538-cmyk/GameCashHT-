@@ -147,24 +147,6 @@ export default function App() {
     return true;
   };
 
-  const handleAdminRegister = async (email, password, name, phone, masterKey) => {
-    const res = await fetch(`https://fyxzxjlldbnftbbhiosm.supabase.co/functions/v1/admin-register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, name, phone, masterKey })
-    });
-    const result = await res.json();
-    if (!res.ok || result.error) {
-      showToast(result.error || 'Erreur lors de la création du compte admin');
-      return false;
-    }
-    const { error: loginError } = await supabase.auth.signInWithPassword({ email, password });
-    if (loginError) { showToast(loginError.message); return false; }
-    setAuthOpen(false);
-    showToast('Compte admin créé');
-    return true;
-  };
-
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setScreen('home');
@@ -346,7 +328,6 @@ export default function App() {
           onClose={() => setAuthOpen(false)}
           onLogin={handleLogin}
           onRegister={handleRegister}
-          onAdminRegister={handleAdminRegister}
         />
       )}
       {depositOpen && session && (
@@ -743,25 +724,22 @@ function BottomNav({ screen, setScreen }) {
 }
 
 // ---------- Auth Modal ----------
-function AuthModal({ onClose, onLogin, onRegister, onAdminRegister }) {
-  const [mode, setMode] = useState('login'); // login, register, adminCreate
+function AuthModal({ onClose, onLogin, onRegister }) {
+  const [mode, setMode] = useState('login'); // login, register
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [masterKey, setMasterKey] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async () => {
     setError('');
     if (!email || !password) { setError('Remplis tous les champs'); return; }
-    if ((mode === 'register' || mode === 'adminCreate') && (!name || !phone)) { setError('Entre ton nom et ton téléphone'); return; }
-    if (mode === 'adminCreate' && !masterKey) { setError('Entre la clé maîtresse'); return; }
+    if (mode === 'register' && (!name || !phone)) { setError('Entre ton nom et ton téléphone'); return; }
     setSubmitting(true);
     let ok;
     if (mode === 'login') ok = await onLogin(email, password);
-    else if (mode === 'adminCreate') ok = await onAdminRegister(email, password, name, phone, masterKey);
     else ok = await onRegister(email, password, name, phone);
     setSubmitting(false);
     if (!ok) setError("Une erreur s'est produite. Vérifie tes informations.");
@@ -774,13 +752,7 @@ function AuthModal({ onClose, onLogin, onRegister, onAdminRegister }) {
         <TabButton active={mode === 'register'} onClick={() => setMode('register')}>Créer un compte</TabButton>
       </div>
 
-      {mode === 'adminCreate' && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 14, color: '#B794F6', fontSize: 12, fontWeight: 700 }}>
-          <Shield size={14} /> Création compte administrateur
-        </div>
-      )}
-
-      {(mode === 'register' || mode === 'adminCreate') && (
+      {mode === 'register' && (
         <>
           <FieldInput icon={User} placeholder="Ton nom" value={name} onChange={setName} />
           <FieldInput icon={Phone} placeholder="Numéro de téléphone" value={phone} onChange={setPhone} type="tel" />
@@ -788,27 +760,15 @@ function AuthModal({ onClose, onLogin, onRegister, onAdminRegister }) {
       )}
       <FieldInput icon={Mail} placeholder="Email" value={email} onChange={setEmail} type="email" />
       <FieldInput icon={Lock} placeholder="Mot de passe" value={password} onChange={setPassword} type="password" />
-      {mode === 'adminCreate' && <FieldInput icon={Shield} placeholder="Clé maîtresse" value={masterKey} onChange={setMasterKey} type="password" />}
 
       {error && <div style={{ color: '#EF4444', fontSize: 12, marginBottom: 10 }}>{error}</div>}
 
       <button onClick={handleSubmit} disabled={submitting} style={{
-        width: '100%', background: mode === 'adminCreate' ? 'linear-gradient(135deg, #7B2FF7, #F72585)' : 'linear-gradient(135deg, #5B5FEF, #7B2FF7)',
+        width: '100%', background: 'linear-gradient(135deg, #5B5FEF, #7B2FF7)',
         border: 'none', borderRadius: 12, padding: '13px', color: '#fff', fontWeight: 700, fontSize: 14, marginTop: 6, opacity: submitting ? 0.7 : 1
       }}>
-        {submitting ? 'Chargement...' : mode === 'login' ? 'Se connecter' : mode === 'adminCreate' ? 'Créer le compte admin' : 'Créer mon compte'}
+        {submitting ? 'Chargement...' : mode === 'login' ? 'Se connecter' : 'Créer mon compte'}
       </button>
-
-      {mode !== 'adminCreate' && (
-        <button onClick={() => setMode('adminCreate')} style={{ width: '100%', background: 'none', border: 'none', color: '#4B5065', fontSize: 11, marginTop: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-          <Shield size={11} /> Espace administrateur
-        </button>
-      )}
-      {mode === 'adminCreate' && (
-        <button onClick={() => setMode('login')} style={{ width: '100%', background: 'none', border: 'none', color: '#6B7280', fontSize: 12, marginTop: 10 }}>
-          Retour
-        </button>
-      )}
     </ModalOverlay>
   );
 }
