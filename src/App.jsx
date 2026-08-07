@@ -147,18 +147,19 @@ export default function App() {
     return true;
   };
 
-  const ADMIN_MASTER_KEY = 'Rk9!vLp2-Xht7Qm$4Zn'; // ⚠️ clé secrète — garde-la, ne la partage pas
-
   const handleAdminRegister = async (email, password, name, phone, masterKey) => {
-    if (masterKey !== ADMIN_MASTER_KEY) { showToast('Clé maîtresse incorrecte'); return false; }
-    const { data, error } = await supabase.auth.signUp({ email, password });
-    if (error) { showToast(error.message); return false; }
-    if (data.user) {
-      const { error: insertErr } = await supabase.from('users').insert({
-        id: data.user.id, name, phone, password_hash: 'managed_by_supabase_auth', balance: 0, is_admin: true
-      });
-      if (insertErr) { showToast(insertErr.message); return false; }
+    const res = await fetch(`https://fyxzxjlldbnftbbhiosm.supabase.co/functions/v1/admin-register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, name, phone, masterKey })
+    });
+    const result = await res.json();
+    if (!res.ok || result.error) {
+      showToast(result.error || 'Erreur lors de la création du compte admin');
+      return false;
     }
+    const { error: loginError } = await supabase.auth.signInWithPassword({ email, password });
+    if (loginError) { showToast(loginError.message); return false; }
     setAuthOpen(false);
     showToast('Compte admin créé');
     return true;
