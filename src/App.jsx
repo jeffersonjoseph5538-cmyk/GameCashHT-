@@ -58,8 +58,6 @@ export default function App() {
   const [buyOpen, setBuyOpen] = useState(null);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
-  const [resetOpen, setResetOpen] = useState(false); // fenêtre "définir un nouveau mot de passe" (après clic sur le lien reçu par email)
-  const [changePwOpen, setChangePwOpen] = useState(false); // fenêtre "changer mon mot de passe" (utilisateur déjà connecté)
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 2500); };
 
@@ -77,12 +75,6 @@ export default function App() {
       setSession(newSession);
       if (newSession) loadProfile(newSession.user.id);
       else { setProfile(null); setHistory([]); setLoading(false); }
-      // Quand l'utilisateur clique sur le lien "réinitialiser mon mot de passe" reçu par email,
-      // Supabase le reconnecte automatiquement et déclenche cet événement.
-      if (_event === 'PASSWORD_RECOVERY') {
-        setAuthOpen(false);
-        setResetOpen(true);
-      }
     });
 
     return () => listener.subscription.unsubscribe();
@@ -155,55 +147,9 @@ export default function App() {
     return true;
   };
 
-  const handleAdminRegister = async (email, password, name, phone, masterKey) => {
-    const res = await fetch(`https://fyxzxjlldbnftbbhiosm.supabase.co/functions/v1/admin-register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, name, phone, masterKey })
-    });
-    const result = await res.json();
-    if (!res.ok || result.error) {
-      showToast(result.error || 'Erreur lors de la création du compte admin');
-      return false;
-    }
-    const { error: loginError } = await supabase.auth.signInWithPassword({ email, password });
-    if (loginError) { showToast(loginError.message); return false; }
-    setAuthOpen(false);
-    showToast('Compte admin créé');
-    return true;
-  };
-
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setScreen('home');
-  };
-
-  // Envoie l'email "mot de passe oublié" contenant un lien de réinitialisation
-  const handleForgotPassword = async (email) => {
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: window.location.origin,
-    });
-    if (error) { showToast(error.message); return false; }
-    showToast('Email envoyé ! Vérifie ta boîte de réception.');
-    return true;
-  };
-
-  // Utilisé après un clic sur le lien reçu par email (mot de passe oublié)
-  const handleSetNewPassword = async (newPassword) => {
-    const { error } = await supabase.auth.updateUser({ password: newPassword });
-    if (error) { showToast(error.message); return false; }
-    setResetOpen(false);
-    showToast('Mot de passe réinitialisé !');
-    return true;
-  };
-
-  // Utilisé par un utilisateur déjà connecté qui veut changer son mot de passe
-  const handleChangePassword = async (newPassword) => {
-    const { error } = await supabase.auth.updateUser({ password: newPassword });
-    if (error) { showToast(error.message); return false; }
-    setChangePwOpen(false);
-    showToast('Mot de passe mis à jour !');
-    return true;
   };
 
   // ---------- Deposits & purchases ----------
@@ -359,7 +305,7 @@ export default function App() {
         {screen === 'promos' && <PromosScreen />}
         {screen === 'historique' && <HistoriqueScreen history={history} session={session} onAuthClick={() => setAuthOpen(true)} />}
         {screen === 'wallet' && (
-          <WalletScreen profile={profile} history={history} session={session} onAuthClick={() => setAuthOpen(true)} onDeposit={() => setDepositOpen(true)} onChangePassword={() => setChangePwOpen(true)} />
+          <WalletScreen profile={profile} history={history} session={session} onAuthClick={() => setAuthOpen(true)} onDeposit={() => setDepositOpen(true)} />
         )}
         {screen === 'admin' && profile?.is_admin && (
           <AdminScreen
@@ -382,15 +328,7 @@ export default function App() {
           onClose={() => setAuthOpen(false)}
           onLogin={handleLogin}
           onRegister={handleRegister}
-          onAdminRegister={handleAdminRegister}
-          onForgotPassword={handleForgotPassword}
         />
-      )}
-      {resetOpen && (
-        <NewPasswordModal title="Nouveau mot de passe" onClose={() => setResetOpen(false)} onSubmit={handleSetNewPassword} />
-      )}
-      {changePwOpen && session && (
-        <NewPasswordModal title="Changer mon mot de passe" onClose={() => setChangePwOpen(false)} onSubmit={handleChangePassword} />
       )}
       {depositOpen && session && (
         <DepositModal catalog={catalog} onClose={() => setDepositOpen(false)} onSubmit={submitDeposit} />
@@ -578,7 +516,7 @@ function HistoriqueScreen({ history, session, onAuthClick }) {
 }
 
 // ---------- Wallet Screen ----------
-function WalletScreen({ profile, history, session, onAuthClick, onDeposit, onChangePassword }) {
+function WalletScreen({ profile, history, session, onAuthClick, onDeposit }) {
   if (!session || !profile) return <LoggedOutState onAuthClick={onAuthClick} text="Connecte-toi pour voir ton wallet" />;
   const pendingDeposits = history.filter(h => h.type === 'deposit' && h.status === 'pending');
   return (
@@ -590,10 +528,6 @@ function WalletScreen({ profile, history, session, onAuthClick, onDeposit, onCha
           <Plus size={16} /> Faire un dépôt
         </button>
       </div>
-
-      <button onClick={onChangePassword} style={{ width: '100%', background: '#141829', border: '1px solid #232842', borderRadius: 12, padding: '12px 14px', marginBottom: 20, color: '#9CA3AF', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 8 }}>
-        <Lock size={14} /> Changer mon mot de passe
-      </button>
 
       <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 12 }}>Dépôts en attente</div>
       {pendingDeposits.length === 0 ? (
@@ -790,34 +724,22 @@ function BottomNav({ screen, setScreen }) {
 }
 
 // ---------- Auth Modal ----------
-function AuthModal({ onClose, onLogin, onRegister, onAdminRegister, onForgotPassword }) {
-  const [mode, setMode] = useState('login'); // login, register, adminCreate, forgot
+function AuthModal({ onClose, onLogin, onRegister }) {
+  const [mode, setMode] = useState('login'); // login, register
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [masterKey, setMasterKey] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async () => {
     setError('');
-    if (mode === 'forgot') {
-      if (!email) { setError('Entre ton email'); return; }
-      setSubmitting(true);
-      const ok = await onForgotPassword(email);
-      setSubmitting(false);
-      if (ok) setMode('login');
-      else setError("Une erreur s'est produite. Vérifie ton email.");
-      return;
-    }
     if (!email || !password) { setError('Remplis tous les champs'); return; }
-    if ((mode === 'register' || mode === 'adminCreate') && (!name || !phone)) { setError('Entre ton nom et ton téléphone'); return; }
-    if (mode === 'adminCreate' && !masterKey) { setError('Entre la clé maîtresse'); return; }
+    if (mode === 'register' && (!name || !phone)) { setError('Entre ton nom et ton téléphone'); return; }
     setSubmitting(true);
     let ok;
     if (mode === 'login') ok = await onLogin(email, password);
-    else if (mode === 'adminCreate') ok = await onAdminRegister(email, password, name, phone, masterKey);
     else ok = await onRegister(email, password, name, phone);
     setSubmitting(false);
     if (!ok) setError("Une erreur s'est produite. Vérifie tes informations.");
@@ -825,96 +747,27 @@ function AuthModal({ onClose, onLogin, onRegister, onAdminRegister, onForgotPass
 
   return (
     <ModalOverlay onClose={onClose}>
-      {mode !== 'forgot' && (
-        <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
-          <TabButton active={mode === 'login'} onClick={() => setMode('login')}>Connexion</TabButton>
-          <TabButton active={mode === 'register'} onClick={() => setMode('register')}>Créer un compte</TabButton>
-        </div>
-      )}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+        <TabButton active={mode === 'login'} onClick={() => setMode('login')}>Connexion</TabButton>
+        <TabButton active={mode === 'register'} onClick={() => setMode('register')}>Créer un compte</TabButton>
+      </div>
 
-      {mode === 'adminCreate' && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 14, color: '#B794F6', fontSize: 12, fontWeight: 700 }}>
-          <Shield size={14} /> Création compte administrateur
-        </div>
-      )}
-      {mode === 'forgot' && (
-        <>
-          <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 6 }}>Mot de passe oublié</div>
-          <div style={{ fontSize: 12, color: '#9CA3AF', marginBottom: 14 }}>Entre ton email, on t'envoie un lien pour en choisir un nouveau.</div>
-        </>
-      )}
-
-      {(mode === 'register' || mode === 'adminCreate') && (
+      {mode === 'register' && (
         <>
           <FieldInput icon={User} placeholder="Ton nom" value={name} onChange={setName} />
           <FieldInput icon={Phone} placeholder="Numéro de téléphone" value={phone} onChange={setPhone} type="tel" />
         </>
       )}
       <FieldInput icon={Mail} placeholder="Email" value={email} onChange={setEmail} type="email" />
-      {mode !== 'forgot' && <FieldInput icon={Lock} placeholder="Mot de passe" value={password} onChange={setPassword} type="password" />}
-      {mode === 'adminCreate' && <FieldInput icon={Shield} placeholder="Clé maîtresse" value={masterKey} onChange={setMasterKey} type="password" />}
-
-      {mode === 'login' && (
-        <button onClick={() => setMode('forgot')} style={{ background: 'none', border: 'none', color: '#8B8FE8', fontSize: 12, marginBottom: 14, padding: 0, display: 'block', marginLeft: 'auto' }}>
-          Mot de passe oublié ?
-        </button>
-      )}
+      <FieldInput icon={Lock} placeholder="Mot de passe" value={password} onChange={setPassword} type="password" />
 
       {error && <div style={{ color: '#EF4444', fontSize: 12, marginBottom: 10 }}>{error}</div>}
 
-      <button onClick={handleSubmit} disabled={submitting} style={{
-        width: '100%', background: mode === 'adminCreate' ? 'linear-gradient(135deg, #7B2FF7, #F72585)' : 'linear-gradient(135deg, #5B5FEF, #7B2FF7)',
-        border: 'none', borderRadius: 12, padding: '13px', color: '#fff', fontWeight: 700, fontSize: 14, marginTop: 6, opacity: submitting ? 0.7 : 1
-      }}>
-        {submitting ? 'Chargement...' : mode === 'login' ? 'Se connecter' : mode === 'adminCreate' ? 'Créer le compte admin' : mode === 'forgot' ? 'Envoyer le lien' : 'Créer mon compte'}
-      </button>
-
-      {mode === 'forgot' && (
-        <button onClick={() => setMode('login')} style={{ width: '100%', background: 'none', border: 'none', color: '#6B7280', fontSize: 12, marginTop: 10 }}>
-          Retour à la connexion
-        </button>
-      )}
-      {mode !== 'adminCreate' && mode !== 'forgot' && (
-        <button onClick={() => setMode('adminCreate')} style={{ width: '100%', background: 'none', border: 'none', color: '#4B5065', fontSize: 11, marginTop: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-          <Shield size={11} /> Espace administrateur
-        </button>
-      )}
-      {mode === 'adminCreate' && (
-        <button onClick={() => setMode('login')} style={{ width: '100%', background: 'none', border: 'none', color: '#6B7280', fontSize: 12, marginTop: 10 }}>
-          Retour
-        </button>
-      )}
-    </ModalOverlay>
-  );
-}
-
-// ---------- New Password Modal (réutilisé pour "mot de passe oublié" ET "changer mon mot de passe") ----------
-function NewPasswordModal({ title, onClose, onSubmit }) {
-  const [password, setPassword] = useState('');
-  const [confirm, setConfirm] = useState('');
-  const [error, setError] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-
-  const handleSubmit = async () => {
-    setError('');
-    if (password.length < 6) { setError('6 caractères minimum'); return; }
-    if (password !== confirm) { setError('Les mots de passe ne correspondent pas'); return; }
-    setSubmitting(true);
-    const ok = await onSubmit(password);
-    setSubmitting(false);
-    if (!ok) setError("Une erreur s'est produite, réessaie.");
-  };
-
-  return (
-    <ModalOverlay onClose={onClose} title={title}>
-      <FieldInput icon={Lock} placeholder="Nouveau mot de passe" value={password} onChange={setPassword} type="password" />
-      <FieldInput icon={Lock} placeholder="Confirme le mot de passe" value={confirm} onChange={setConfirm} type="password" />
-      {error && <div style={{ color: '#EF4444', fontSize: 12, marginBottom: 10 }}>{error}</div>}
       <button onClick={handleSubmit} disabled={submitting} style={{
         width: '100%', background: 'linear-gradient(135deg, #5B5FEF, #7B2FF7)',
-        border: 'none', borderRadius: 12, padding: '13px', color: '#fff', fontWeight: 700, fontSize: 14, opacity: submitting ? 0.7 : 1
+        border: 'none', borderRadius: 12, padding: '13px', color: '#fff', fontWeight: 700, fontSize: 14, marginTop: 6, opacity: submitting ? 0.7 : 1
       }}>
-        {submitting ? 'Chargement...' : 'Enregistrer'}
+        {submitting ? 'Chargement...' : mode === 'login' ? 'Se connecter' : 'Créer mon compte'}
       </button>
     </ModalOverlay>
   );
