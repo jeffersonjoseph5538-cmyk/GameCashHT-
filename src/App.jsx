@@ -1074,31 +1074,19 @@ function TabButton({ active, onClick, children }) {
 
 // ---------- Deposit Modal ----------
 function DepositModal({ catalog, onClose, onSubmit }) {
-  const [method, setMethod] = useState('MonCash');
   const [amount, setAmount] = useState('');
-  const [txId, setTxId] = useState('');
-  const [copied, setCopied] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState('');
 
-  const merchantNumber = catalog.merchant_natcash;
+  const canSubmit = amount && Number(amount) > 0;
 
-  const copyNumber = () => {
-    navigator.clipboard?.writeText(merchantNumber);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
-
-  const canSubmitNatCash = amount && Number(amount) > 0 && txId.trim().length > 0;
-  const canSubmitMonCash = amount && Number(amount) > 0;
-
-  const handleMonCashPay = async () => {
+  const handlePay = async () => {
     setError('');
     setProcessing(true);
     try {
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData.session?.access_token;
-      const res = await fetch('https://fyxzxjlldbnftbbhiosm.supabase.co/functions/v1/create-safacil-payment', {
+      const res = await fetch('https://fyxzxjlldbnftbbhiosm.supabase.co/functions/v1/create-kobara-payment', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ amount: Number(amount) })
@@ -1109,7 +1097,7 @@ function DepositModal({ catalog, onClose, onSubmit }) {
         setProcessing(false);
         return;
       }
-      window.location.href = data.paymentUrl;
+      window.location.href = data.checkoutUrl;
     } catch (e) {
       setError('Erreur de connexion. Réessaie.');
       setProcessing(false);
@@ -1118,52 +1106,17 @@ function DepositModal({ catalog, onClose, onSubmit }) {
 
   return (
     <ModalOverlay onClose={onClose} title="Faire un dépôt">
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        <TabButton active={method === 'MonCash'} onClick={() => setMethod('MonCash')}>MonCash</TabButton>
-        <TabButton active={method === 'NatCash'} onClick={() => setMethod('NatCash')}>NatCash</TabButton>
+      <div style={{ background: '#0F1220', border: '1px solid #232842', borderRadius: 12, padding: 14, marginBottom: 16 }}>
+        <div style={{ fontSize: 12, color: '#9CA3AF' }}>Paiement automatique via MonCash ou NatCash — choisis ta méthode sur la page suivante, ton solde sera crédité instantanément après paiement.</div>
       </div>
-
-      {method === 'MonCash' ? (
-        <>
-          <div style={{ background: '#0F1220', border: '1px solid #232842', borderRadius: 12, padding: 14, marginBottom: 16 }}>
-            <div style={{ fontSize: 12, color: '#9CA3AF' }}>Paiement automatique — tu seras redirigé vers MonCash pour payer, ton solde sera crédité instantanément après paiement.</div>
-          </div>
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ fontSize: 12, color: '#9CA3AF', marginBottom: 6, display: 'block' }}>Montant à déposer (HTG)</label>
-            <input type="number" placeholder="Ex: 500" value={amount} onChange={e => setAmount(e.target.value)} style={{ width: '100%', padding: '13px 14px', borderRadius: 12, background: '#0F1220', border: '1px solid #232842', color: '#F5F6FA', fontSize: 14, outline: 'none' }} />
-          </div>
-          {error && <div style={{ color: '#EF4444', fontSize: 12, marginBottom: 12 }}>{error}</div>}
-          <button onClick={handleMonCashPay} disabled={!canSubmitMonCash || processing} style={{ width: '100%', background: canSubmitMonCash ? 'linear-gradient(135deg, #5B5FEF, #7B2FF7)' : '#232842', border: 'none', borderRadius: 12, padding: '13px', color: '#fff', fontWeight: 700, fontSize: 14 }}>
-            {processing ? 'Redirection...' : 'Payer avec MonCash'}
-          </button>
-        </>
-      ) : (
-        <>
-          <div style={{ background: '#0F1220', border: '1px solid #232842', borderRadius: 12, padding: 14, marginBottom: 16 }}>
-            <div style={{ fontSize: 12, color: '#9CA3AF', marginBottom: 8 }}>1. Envoie ton montant vers ce numéro NatCash :</div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ fontWeight: 800, fontSize: 16 }}>{merchantNumber}</div>
-              <button onClick={copyNumber} style={{ background: '#1A1F33', border: 'none', borderRadius: 8, padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 4, color: copied ? '#22C55E' : '#9CA3AF', fontSize: 11, fontWeight: 700 }}>
-                {copied ? <Check size={12} /> : <Copy size={12} />} {copied ? 'Copié' : 'Copier'}
-              </button>
-            </div>
-            <div style={{ fontSize: 11, color: '#6B7280', marginTop: 10 }}>2. Entre le montant envoyé et l'ID de transaction reçu par SMS ci-dessous.</div>
-          </div>
-
-          <div style={{ marginBottom: 4 }}>
-            <label style={{ fontSize: 12, color: '#9CA3AF', marginBottom: 6, display: 'block' }}>Montant envoyé (HTG)</label>
-            <input type="number" placeholder="Ex: 500" value={amount} onChange={e => setAmount(e.target.value)} style={{ width: '100%', padding: '13px 14px', borderRadius: 12, marginBottom: 12, background: '#0F1220', border: '1px solid #232842', color: '#F5F6FA', fontSize: 14, outline: 'none' }} />
-          </div>
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ fontSize: 12, color: '#9CA3AF', marginBottom: 6, display: 'block' }}>ID de transaction</label>
-            <input placeholder="Ex: TX123456789" value={txId} onChange={e => setTxId(e.target.value)} style={{ width: '100%', padding: '13px 14px', borderRadius: 12, background: '#0F1220', border: '1px solid #232842', color: '#F5F6FA', fontSize: 14, outline: 'none' }} />
-          </div>
-
-          <button onClick={() => canSubmitNatCash && onSubmit({ method: 'NatCash', amount, txId })} disabled={!canSubmitNatCash} style={{ width: '100%', background: canSubmitNatCash ? 'linear-gradient(135deg, #5B5FEF, #7B2FF7)' : '#232842', border: 'none', borderRadius: 12, padding: '13px', color: '#fff', fontWeight: 700, fontSize: 14 }}>
-            Envoyer la demande de dépôt
-          </button>
-        </>
-      )}
+      <div style={{ marginBottom: 16 }}>
+        <label style={{ fontSize: 12, color: '#9CA3AF', marginBottom: 6, display: 'block' }}>Montant à déposer (HTG)</label>
+        <input type="number" placeholder="Ex: 500" value={amount} onChange={e => setAmount(e.target.value)} style={{ width: '100%', padding: '13px 14px', borderRadius: 12, background: '#0F1220', border: '1px solid #232842', color: '#F5F6FA', fontSize: 14, outline: 'none' }} />
+      </div>
+      {error && <div style={{ color: '#EF4444', fontSize: 12, marginBottom: 12 }}>{error}</div>}
+      <button onClick={handlePay} disabled={!canSubmit || processing} style={{ width: '100%', background: canSubmit ? 'linear-gradient(135deg, #5B5FEF, #7B2FF7)' : '#232842', border: 'none', borderRadius: 12, padding: '13px', color: '#fff', fontWeight: 700, fontSize: 14 }}>
+        {processing ? 'Redirection...' : 'Payer maintenant'}
+      </button>
     </ModalOverlay>
   );
 }
