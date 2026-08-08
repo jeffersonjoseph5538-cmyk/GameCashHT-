@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Gem, Home, ShoppingCart, Tag, Clock, Wallet, User, Lock, Mail, Phone, Plus, ArrowUpRight, ArrowDownRight, X, Check, Copy, ChevronRight, LogOut, Shield, Image as ImageIcon, Save } from 'lucide-react';
+import { Gem, Home, ShoppingCart, Tag, Clock, Wallet, User, Lock, Mail, Phone, Plus, ArrowUpRight, ArrowDownRight, X, Check, Copy, ChevronRight, LogOut, Shield, Image as ImageIcon, Save, Eye, EyeOff, Settings } from 'lucide-react';
 import { supabase } from './supabaseClient.js';
 
 const DEFAULT_CATALOG = {
@@ -53,6 +53,8 @@ export default function App() {
   const [pendingTx, setPendingTx] = useState([]); // toutes les transactions en attente (vue admin)
   const [catalog, setCatalog] = useState(DEFAULT_CATALOG);
   const [authOpen, setAuthOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [recoveryMode, setRecoveryMode] = useState(false);
   const [selectedGame, setSelectedGame] = useState(null);
   const [depositOpen, setDepositOpen] = useState(false);
   const [buyOpen, setBuyOpen] = useState(null);
@@ -71,8 +73,11 @@ export default function App() {
       else setLoading(false);
     });
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event, newSession) => {
       setSession(newSession);
+      if (event === 'PASSWORD_RECOVERY') {
+        setRecoveryMode(true);
+      }
       if (newSession) loadProfile(newSession.user.id);
       else { setProfile(null); setHistory([]); setLoading(false); }
     });
@@ -290,7 +295,7 @@ export default function App() {
         input { font-family: inherit; }
       `}</style>
 
-      <Header catalog={catalog} profile={profile} onAuthClick={() => setAuthOpen(true)} onLogout={handleLogout} onAdminClick={() => setScreen('admin')} />
+      <Header catalog={catalog} profile={profile} onAuthClick={() => setAuthOpen(true)} onLogout={handleLogout} onAdminClick={() => setScreen('admin')} onAccountClick={() => setAccountOpen(true)} />
 
       <div style={{ flex: 1, overflowY: 'auto', paddingBottom: 90 }}>
         {screen === 'home' && (
@@ -336,13 +341,19 @@ export default function App() {
       {buyOpen && (
         <BuyModal pack={buyOpen.pack} game={buyOpen.game} profile={profile} onClose={() => setBuyOpen(null)} onConfirm={(playerId, serverId) => submitPurchase(buyOpen.pack, buyOpen.game, playerId, serverId)} />
       )}
+      {accountOpen && (
+        <AccountModal onClose={() => setAccountOpen(false)} showToast={showToast} />
+      )}
+      {recoveryMode && (
+        <RecoveryModal onClose={() => setRecoveryMode(false)} showToast={showToast} />
+      )}
       {toast && <Toast message={toast} />}
     </div>
   );
 }
 
 // ---------- Header ----------
-function Header({ catalog, profile, onAuthClick, onLogout, onAdminClick }) {
+function Header({ catalog, profile, onAuthClick, onLogout, onAdminClick, onAccountClick }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 18px', borderBottom: '1px solid #1A1F33' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -365,9 +376,14 @@ function Header({ catalog, profile, onAuthClick, onLogout, onAdminClick }) {
           </button>
         )}
         {profile ? (
-          <button onClick={onLogout} style={{ background: '#1A1F33', border: 'none', borderRadius: 20, padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 6, color: '#F5F6FA', fontSize: 13, fontWeight: 600 }}>
-            <User size={14} /> {profile.name?.split(' ')[0]} <LogOut size={13} color="#6B7280" />
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#1A1F33', borderRadius: 20, padding: '6px 6px 6px 12px' }}>
+            <button onClick={onAccountClick} style={{ background: 'none', border: 'none', display: 'flex', alignItems: 'center', gap: 6, color: '#F5F6FA', fontSize: 13, fontWeight: 600 }}>
+              <User size={14} /> {profile.name?.split(' ')[0]}
+            </button>
+            <button onClick={onLogout} style={{ background: '#0F1220', border: 'none', borderRadius: '50%', width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <LogOut size={12} color="#6B7280" />
+            </button>
+          </div>
         ) : (
           <button onClick={onAuthClick} style={{ background: 'linear-gradient(135deg, #5B5FEF, #7B2FF7)', border: 'none', borderRadius: 20, padding: '9px 16px', color: '#fff', fontSize: 13, fontWeight: 700 }}>
             Connexion
@@ -940,16 +956,29 @@ function BottomNav({ screen, setScreen }) {
 
 // ---------- Auth Modal ----------
 function AuthModal({ onClose, onLogin, onRegister }) {
-  const [mode, setMode] = useState('login'); // login, register
+  const [mode, setMode] = useState('login'); // login, register, forgot
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async () => {
     setError('');
+    setInfo('');
+    if (mode === 'forgot') {
+      if (!email) { setError('Entre ton email'); return; }
+      setSubmitting(true);
+      const { error: resetErr } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: window.location.origin
+      });
+      setSubmitting(false);
+      if (resetErr) { setError(resetErr.message); return; }
+      setInfo('Email envoyé ! Vérifie ta boîte de réception pour réinitialiser ton mot de passe.');
+      return;
+    }
     if (!email || !password) { setError('Remplis tous les champs'); return; }
     if (mode === 'register' && (!name || !phone)) { setError('Entre ton nom et ton téléphone'); return; }
     setSubmitting(true);
@@ -962,10 +991,16 @@ function AuthModal({ onClose, onLogin, onRegister }) {
 
   return (
     <ModalOverlay onClose={onClose}>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
-        <TabButton active={mode === 'login'} onClick={() => setMode('login')}>Connexion</TabButton>
-        <TabButton active={mode === 'register'} onClick={() => setMode('register')}>Créer un compte</TabButton>
-      </div>
+      {mode !== 'forgot' && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+          <TabButton active={mode === 'login'} onClick={() => setMode('login')}>Connexion</TabButton>
+          <TabButton active={mode === 'register'} onClick={() => setMode('register')}>Créer un compte</TabButton>
+        </div>
+      )}
+
+      {mode === 'forgot' && (
+        <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 14 }}>Réinitialiser le mot de passe</div>
+      )}
 
       {mode === 'register' && (
         <>
@@ -974,25 +1009,57 @@ function AuthModal({ onClose, onLogin, onRegister }) {
         </>
       )}
       <FieldInput icon={Mail} placeholder="Email" value={email} onChange={setEmail} type="email" />
-      <FieldInput icon={Lock} placeholder="Mot de passe" value={password} onChange={setPassword} type="password" />
+      {mode !== 'forgot' && (
+        <FieldInput icon={Lock} placeholder="Mot de passe" value={password} onChange={setPassword} type="password" />
+      )}
 
       {error && <div style={{ color: '#EF4444', fontSize: 12, marginBottom: 10 }}>{error}</div>}
+      {info && <div style={{ color: '#22C55E', fontSize: 12, marginBottom: 10 }}>{info}</div>}
 
       <button onClick={handleSubmit} disabled={submitting} style={{
         width: '100%', background: 'linear-gradient(135deg, #5B5FEF, #7B2FF7)',
         border: 'none', borderRadius: 12, padding: '13px', color: '#fff', fontWeight: 700, fontSize: 14, marginTop: 6, opacity: submitting ? 0.7 : 1
       }}>
-        {submitting ? 'Chargement...' : mode === 'login' ? 'Se connecter' : 'Créer mon compte'}
+        {submitting ? 'Chargement...' : mode === 'login' ? 'Se connecter' : mode === 'forgot' ? 'Envoyer le lien' : 'Créer mon compte'}
       </button>
+
+      {mode === 'login' && (
+        <button onClick={() => { setMode('forgot'); setError(''); setInfo(''); }} style={{ width: '100%', background: 'none', border: 'none', color: '#6B7280', fontSize: 12, marginTop: 14 }}>
+          Mot de passe oublié ?
+        </button>
+      )}
+      {mode === 'forgot' && (
+        <button onClick={() => { setMode('login'); setError(''); setInfo(''); }} style={{ width: '100%', background: 'none', border: 'none', color: '#6B7280', fontSize: 12, marginTop: 14 }}>
+          Retour à la connexion
+        </button>
+      )}
     </ModalOverlay>
   );
 }
 
 function FieldInput({ icon: Icon, placeholder, value, onChange, type = 'text' }) {
+  const [show, setShow] = useState(false);
+  const isPassword = type === 'password';
+  const actualType = isPassword ? (show ? 'text' : 'password') : type;
   return (
     <div style={{ position: 'relative', marginBottom: 12 }}>
       <Icon size={16} color="#6B7280" style={{ position: 'absolute', left: 14, top: 14 }} />
-      <input type={type} placeholder={placeholder} value={value} onChange={e => onChange(e.target.value)} style={{ width: '100%', padding: '13px 14px 13px 40px', borderRadius: 12, background: '#0F1220', border: '1px solid #232842', color: '#F5F6FA', fontSize: 14, outline: 'none' }} />
+      <input
+        type={actualType}
+        placeholder={placeholder}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        style={{ width: '100%', padding: isPassword ? '13px 42px 13px 40px' : '13px 14px 13px 40px', borderRadius: 12, background: '#0F1220', border: '1px solid #232842', color: '#F5F6FA', fontSize: 14, outline: 'none' }}
+      />
+      {isPassword && (
+        <button
+          type="button"
+          onClick={() => setShow(s => !s)}
+          style={{ position: 'absolute', right: 12, top: 11, background: 'none', border: 'none', padding: 4 }}
+        >
+          {show ? <EyeOff size={16} color="#6B7280" /> : <Eye size={16} color="#6B7280" />}
+        </button>
+      )}
     </div>
   );
 }
@@ -1243,7 +1310,76 @@ function ModalOverlay({ children, onClose, title }) {
   );
 }
 
-// ---------- Toast ----------
+// ---------- Account Modal (changer mot de passe) ----------
+function AccountModal({ onClose, showToast }) {
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleChangePassword = async () => {
+    setError('');
+    if (!newPassword || newPassword.length < 6) { setError('Le mot de passe doit faire au moins 6 caractères'); return; }
+    if (newPassword !== confirmPassword) { setError('Les mots de passe ne correspondent pas'); return; }
+    setSubmitting(true);
+    const { error: updateErr } = await supabase.auth.updateUser({ password: newPassword });
+    setSubmitting(false);
+    if (updateErr) { setError(updateErr.message); return; }
+    showToast('Mot de passe mis à jour !');
+    onClose();
+  };
+
+  return (
+    <ModalOverlay onClose={onClose} title="Mon compte">
+      <div style={{ fontSize: 13, color: '#9CA3AF', marginBottom: 16 }}>Changer ton mot de passe</div>
+      <FieldInput icon={Lock} placeholder="Nouveau mot de passe" value={newPassword} onChange={setNewPassword} type="password" />
+      <FieldInput icon={Lock} placeholder="Confirmer le mot de passe" value={confirmPassword} onChange={setConfirmPassword} type="password" />
+      {error && <div style={{ color: '#EF4444', fontSize: 12, marginBottom: 10 }}>{error}</div>}
+      <button onClick={handleChangePassword} disabled={submitting} style={{
+        width: '100%', background: 'linear-gradient(135deg, #5B5FEF, #7B2FF7)', border: 'none',
+        borderRadius: 12, padding: '13px', color: '#fff', fontWeight: 700, fontSize: 14, opacity: submitting ? 0.7 : 1
+      }}>
+        {submitting ? 'Mise à jour...' : 'Mettre à jour le mot de passe'}
+      </button>
+    </ModalOverlay>
+  );
+}
+
+// ---------- Recovery Modal (après clic sur lien email "mot de passe oublié") ----------
+function RecoveryModal({ onClose, showToast }) {
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSetPassword = async () => {
+    setError('');
+    if (!newPassword || newPassword.length < 6) { setError('Le mot de passe doit faire au moins 6 caractères'); return; }
+    if (newPassword !== confirmPassword) { setError('Les mots de passe ne correspondent pas'); return; }
+    setSubmitting(true);
+    const { error: updateErr } = await supabase.auth.updateUser({ password: newPassword });
+    setSubmitting(false);
+    if (updateErr) { setError(updateErr.message); return; }
+    showToast('Mot de passe défini ! Tu es connecté.');
+    onClose();
+  };
+
+  return (
+    <ModalOverlay onClose={onClose} title="Nouveau mot de passe">
+      <div style={{ fontSize: 13, color: '#9CA3AF', marginBottom: 16 }}>Choisis un nouveau mot de passe pour ton compte.</div>
+      <FieldInput icon={Lock} placeholder="Nouveau mot de passe" value={newPassword} onChange={setNewPassword} type="password" />
+      <FieldInput icon={Lock} placeholder="Confirmer le mot de passe" value={confirmPassword} onChange={setConfirmPassword} type="password" />
+      {error && <div style={{ color: '#EF4444', fontSize: 12, marginBottom: 10 }}>{error}</div>}
+      <button onClick={handleSetPassword} disabled={submitting} style={{
+        width: '100%', background: 'linear-gradient(135deg, #5B5FEF, #7B2FF7)', border: 'none',
+        borderRadius: 12, padding: '13px', color: '#fff', fontWeight: 700, fontSize: 14, opacity: submitting ? 0.7 : 1
+      }}>
+        {submitting ? 'Enregistrement...' : 'Définir le mot de passe'}
+      </button>
+    </ModalOverlay>
+  );
+}
+
 function Toast({ message }) {
   return (
     <div style={{ position: 'fixed', bottom: 100, left: '50%', transform: 'translateX(-50%)', background: '#1A1F33', border: '1px solid #232842', borderRadius: 12, padding: '10px 18px', fontSize: 13, fontWeight: 600, zIndex: 100, whiteSpace: 'nowrap' }}>
