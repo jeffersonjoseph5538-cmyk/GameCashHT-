@@ -585,17 +585,6 @@ function AdminScreen({ catalog, onSaveCatalog, showToast, pendingTx, onApproveDe
 
   const handleSave = async () => { await onSaveCatalog(draft); setDirty(false); };
 
-  const addNewGame = (newGame) => {
-    setDraft(d => ({ ...d, games: [...d.games, newGame] }));
-    setDirty(true);
-    showToast(`${newGame.name} ajouté ! N'oublie pas d'enregistrer.`);
-  };
-
-  const removeGame = (gameId) => {
-    setDraft(d => ({ ...d, games: d.games.filter(g => g.id !== gameId) }));
-    setDirty(true);
-  };
-
   return (
     <div style={{ padding: 18 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
@@ -661,14 +650,11 @@ function AdminScreen({ catalog, onSaveCatalog, showToast, pendingTx, onApproveDe
       <SectionTitle>Jeux & Prix</SectionTitle>
       {draft.games.map(game => (
         <div key={game.id} style={{ background: '#141829', border: '1px solid #232842', borderRadius: 14, padding: 14, marginBottom: 14 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{ width: 36, height: 36, borderRadius: 9, background: game.imgUrl ? `url(${game.imgUrl}) center/cover` : `${game.color}33`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {!game.imgUrl && <Gem size={16} color={game.color} />}
-              </div>
-              <div style={{ fontWeight: 800, fontSize: 15 }}>{game.name}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 9, background: game.imgUrl ? `url(${game.imgUrl}) center/cover` : `${game.color}33`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {!game.imgUrl && <Gem size={16} color={game.color} />}
             </div>
-            <button onClick={() => removeGame(game.id)} style={{ background: 'none', border: 'none', color: '#EF4444', fontSize: 11, fontWeight: 700 }}>Retirer</button>
+            <div style={{ fontWeight: 800, fontSize: 15 }}>{game.name}</div>
           </div>
 
           <AdminField label="URL de l'image du jeu" placeholder="https://..." value={game.imgUrl} onChange={v => updateGame(game.id, 'imgUrl', v)} icon={ImageIcon} small />
@@ -685,8 +671,6 @@ function AdminScreen({ catalog, onSaveCatalog, showToast, pendingTx, onApproveDe
         </div>
       ))}
 
-      <AddGamePanel existingGameIds={draft.games.map(g => g.gameCode)} onAddGame={addNewGame} showToast={showToast} />
-
       <button onClick={handleSave} disabled={!dirty} style={{
         width: '100%', background: dirty ? 'linear-gradient(135deg, #5B5FEF, #7B2FF7)' : '#232842',
         border: 'none', borderRadius: 12, padding: '14px', color: '#fff', fontWeight: 700, fontSize: 14,
@@ -700,205 +684,6 @@ function AdminScreen({ catalog, onSaveCatalog, showToast, pendingTx, onApproveDe
 
 function SectionTitle({ children }) {
   return <div style={{ fontSize: 13, fontWeight: 800, color: '#B794F6', marginBottom: 10, marginTop: 4 }}>{children}</div>;
-}
-
-const RANDOM_COLORS = ['#FF6A00', '#00D2FF', '#F2A900', '#22C55E', '#EF4444', '#8B5CF6', '#EC4899', '#14B8A6'];
-
-function AddGamePanel({ existingGameIds, onAddGame, showToast }) {
-  const [query, setQuery] = useState('');
-  const [allGames, setAllGames] = useState(null); // null = pas encore chargé
-  const [loadingGames, setLoadingGames] = useState(false);
-  const [selectedGame, setSelectedGame] = useState(null);
-  const [catalogue, setCatalogue] = useState(null);
-  const [loadingCatalogue, setLoadingCatalogue] = useState(false);
-  const [selectedPacks, setSelectedPacks] = useState({}); // { catalogueId: { checked, price } }
-  const [expanded, setExpanded] = useState(false);
-
-  const FUNCTIONS_URL = 'https://fyxzxjlldbnftbbhiosm.supabase.co/functions/v1/g2bulk-catalog';
-
-  const loadGamesList = async () => {
-    if (allGames) return;
-    setLoadingGames(true);
-    try {
-      const res = await fetch(`${FUNCTIONS_URL}?action=games`);
-      const data = await res.json();
-      setAllGames(data.games || []);
-    } catch (e) {
-      showToast('Erreur de chargement des jeux G2Bulk');
-    }
-    setLoadingGames(false);
-  };
-
-  const openPanel = () => {
-    setExpanded(true);
-    loadGamesList();
-  };
-
-  const selectGame = async (game) => {
-    setSelectedGame(game);
-    setCatalogue(null);
-    setSelectedPacks({});
-    setLoadingCatalogue(true);
-    try {
-      const res = await fetch(`${FUNCTIONS_URL}?action=catalogue&code=${game.code}`);
-      const data = await res.json();
-      setCatalogue(data.catalogues || []);
-    } catch (e) {
-      showToast('Erreur de chargement du catalogue');
-    }
-    setLoadingCatalogue(false);
-  };
-
-  const togglePack = (item) => {
-    setSelectedPacks(prev => {
-      const existing = prev[item.id];
-      if (existing) {
-        const { [item.id]: _, ...rest } = prev;
-        return rest;
-      }
-      return { ...prev, [item.id]: { name: item.name, usdAmount: item.amount, price: Math.ceil(item.amount * 135 * 1.15 / 5) * 5 } };
-    });
-  };
-
-  const updateSelectedPrice = (itemId, price) => {
-    setSelectedPacks(prev => ({ ...prev, [itemId]: { ...prev[itemId], price: Number(price) || 0 } }));
-  };
-
-  const confirmAddGame = () => {
-    const packs = Object.entries(selectedPacks).map(([id, val], idx) => ({
-      id: `${selectedGame.code}_${idx}`,
-      label: val.name,
-      price: val.price,
-      g2code: val.name
-    }));
-    if (packs.length === 0) { showToast('Sélectionne au moins un pack'); return; }
-
-    const newGame = {
-      id: selectedGame.code,
-      name: selectedGame.name,
-      color: RANDOM_COLORS[Math.floor(Math.random() * RANDOM_COLORS.length)],
-      imgUrl: '',
-      gameCode: selectedGame.code,
-      requiresServerId: false, // à ajuster manuellement si le jeu le nécessite
-      packs
-    };
-    onAddGame(newGame);
-    setExpanded(false);
-    setSelectedGame(null);
-    setCatalogue(null);
-    setSelectedPacks({});
-    setQuery('');
-  };
-
-  const filteredGames = allGames?.filter(g =>
-    !existingGameIds.includes(g.code) &&
-    g.name.toLowerCase().includes(query.toLowerCase())
-  ) || [];
-
-  return (
-    <div style={{ marginBottom: 20 }}>
-      <SectionTitle>Ajouter un jeu depuis G2Bulk</SectionTitle>
-
-      {!expanded ? (
-        <button onClick={openPanel} style={{
-          width: '100%', background: '#141829', border: '1px dashed #3A4162', borderRadius: 14,
-          padding: '16px', color: '#9CA3AF', fontWeight: 700, fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8
-        }}>
-          <Plus size={16} /> Parcourir le catalogue G2Bulk (180+ jeux)
-        </button>
-      ) : (
-        <div style={{ background: '#141829', border: '1px solid #232842', borderRadius: 14, padding: 14 }}>
-          {!selectedGame ? (
-            <>
-              <input
-                placeholder="Rechercher un jeu (ex: valorant, mlbb...)"
-                value={query}
-                onChange={e => setQuery(e.target.value)}
-                style={{ width: '100%', padding: '11px 14px', borderRadius: 10, background: '#0F1220', border: '1px solid #232842', color: '#F5F6FA', fontSize: 13, outline: 'none', marginBottom: 12 }}
-              />
-              {loadingGames ? (
-                <div style={{ color: '#6B7280', fontSize: 13, textAlign: 'center', padding: 20 }}>Chargement...</div>
-              ) : (
-                <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {query.length === 0 ? (
-                    <div style={{ color: '#6B7280', fontSize: 12, textAlign: 'center', padding: 16 }}>Tape un nom de jeu pour chercher parmi {allGames?.length || 0} titres disponibles.</div>
-                  ) : filteredGames.length === 0 ? (
-                    <div style={{ color: '#6B7280', fontSize: 12, textAlign: 'center', padding: 16 }}>Aucun résultat.</div>
-                  ) : (
-                    filteredGames.slice(0, 20).map(g => (
-                      <button
-                        key={g.code}
-                        onClick={() => selectGame(g)}
-                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', background: '#0F1220', border: '1px solid #232842', borderRadius: 10, color: '#F5F6FA', fontSize: 13, fontWeight: 600 }}
-                      >
-                        {g.name}
-                        <ChevronRight size={14} color="#6B7280" />
-                      </button>
-                    ))
-                  )}
-                </div>
-              )}
-              <button onClick={() => setExpanded(false)} style={{ width: '100%', background: 'none', border: 'none', color: '#6B7280', fontSize: 12, marginTop: 10 }}>Fermer</button>
-            </>
-          ) : (
-            <>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                <div style={{ fontWeight: 800, fontSize: 15 }}>{selectedGame.name}</div>
-                <button onClick={() => { setSelectedGame(null); setCatalogue(null); }} style={{ background: 'none', border: 'none', color: '#6B7280', fontSize: 12 }}>Changer</button>
-              </div>
-
-              {loadingCatalogue ? (
-                <div style={{ color: '#6B7280', fontSize: 13, textAlign: 'center', padding: 20 }}>Chargement du catalogue...</div>
-              ) : (
-                <>
-                  <div style={{ fontSize: 11, color: '#6B7280', marginBottom: 8 }}>Sélectionne les dénominations à vendre (prix suggéré modifiable) :</div>
-                  <div style={{ maxHeight: 320, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
-                    {catalogue?.map(item => {
-                      const isSelected = !!selectedPacks[item.id];
-                      return (
-                        <div key={item.id} style={{ background: isSelected ? '#5B5FEF15' : '#0F1220', border: `1px solid ${isSelected ? '#5B5FEF55' : '#232842'}`, borderRadius: 10, padding: 10 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: isSelected ? 8 : 0 }}>
-                            <button onClick={() => togglePack(item)} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', flex: 1, textAlign: 'left' }}>
-                              <div style={{ width: 18, height: 18, borderRadius: 5, border: `2px solid ${isSelected ? '#5B5FEF' : '#3A4162'}`, background: isSelected ? '#5B5FEF' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                {isSelected && <Check size={12} color="#fff" />}
-                              </div>
-                              <span style={{ fontSize: 13, color: '#F5F6FA', fontWeight: 600 }}>{item.name}</span>
-                            </button>
-                            <span style={{ fontSize: 11, color: '#6B7280' }}>${item.amount}</span>
-                          </div>
-                          {isSelected && (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
-                              <span style={{ fontSize: 11, color: '#9CA3AF' }}>Prix de vente (HTG)</span>
-                              <input
-                                type="number"
-                                value={selectedPacks[item.id].price}
-                                onChange={e => updateSelectedPrice(item.id, e.target.value)}
-                                style={{ flex: 1, padding: '6px 10px', borderRadius: 8, background: '#0F1220', border: '1px solid #232842', color: '#F5F6FA', fontSize: 12, textAlign: 'right', outline: 'none' }}
-                              />
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                  <button
-                    onClick={confirmAddGame}
-                    disabled={Object.keys(selectedPacks).length === 0}
-                    style={{
-                      width: '100%', background: Object.keys(selectedPacks).length > 0 ? 'linear-gradient(135deg, #5B5FEF, #7B2FF7)' : '#232842',
-                      border: 'none', borderRadius: 12, padding: '12px', color: '#fff', fontWeight: 700, fontSize: 13
-                    }}
-                  >
-                    Ajouter {selectedGame.name} ({Object.keys(selectedPacks).length} pack{Object.keys(selectedPacks).length > 1 ? 's' : ''})
-                  </button>
-                </>
-              )}
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  );
 }
 
 function AdminField({ label, value, onChange, placeholder, icon: Icon, small }) {
@@ -1011,10 +796,8 @@ function DepositModal({ catalog, onClose, onSubmit }) {
   const [amount, setAmount] = useState('');
   const [txId, setTxId] = useState('');
   const [copied, setCopied] = useState(false);
-  const [processing, setProcessing] = useState(false);
-  const [error, setError] = useState('');
 
-  const merchantNumber = catalog.merchant_natcash;
+  const merchantNumber = method === 'MonCash' ? catalog.merchant_moncash : catalog.merchant_natcash;
 
   const copyNumber = () => {
     navigator.clipboard?.writeText(merchantNumber);
@@ -1022,32 +805,7 @@ function DepositModal({ catalog, onClose, onSubmit }) {
     setTimeout(() => setCopied(false), 1500);
   };
 
-  const canSubmitNatCash = amount && Number(amount) > 0 && txId.trim().length > 0;
-  const canSubmitMonCash = amount && Number(amount) > 0;
-
-  const handleMonCashPay = async () => {
-    setError('');
-    setProcessing(true);
-    try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData.session?.access_token;
-      const res = await fetch('https://fyxzxjlldbnftbbhiosm.supabase.co/functions/v1/create-safacil-payment', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ amount: Number(amount) })
-      });
-      const data = await res.json();
-      if (!res.ok || data.error) {
-        setError(data.error || 'Erreur lors de la création du paiement');
-        setProcessing(false);
-        return;
-      }
-      window.location.href = data.paymentUrl;
-    } catch (e) {
-      setError('Erreur de connexion. Réessaie.');
-      setProcessing(false);
-    }
-  };
+  const canSubmit = amount && Number(amount) > 0 && txId.trim().length > 0;
 
   return (
     <ModalOverlay onClose={onClose} title="Faire un dépôt">
@@ -1056,47 +814,29 @@ function DepositModal({ catalog, onClose, onSubmit }) {
         <TabButton active={method === 'NatCash'} onClick={() => setMethod('NatCash')}>NatCash</TabButton>
       </div>
 
-      {method === 'MonCash' ? (
-        <>
-          <div style={{ background: '#0F1220', border: '1px solid #232842', borderRadius: 12, padding: 14, marginBottom: 16 }}>
-            <div style={{ fontSize: 12, color: '#9CA3AF' }}>Paiement automatique — tu seras redirigé vers MonCash pour payer, ton solde sera crédité instantanément après paiement.</div>
-          </div>
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ fontSize: 12, color: '#9CA3AF', marginBottom: 6, display: 'block' }}>Montant à déposer (HTG)</label>
-            <input type="number" placeholder="Ex: 500" value={amount} onChange={e => setAmount(e.target.value)} style={{ width: '100%', padding: '13px 14px', borderRadius: 12, background: '#0F1220', border: '1px solid #232842', color: '#F5F6FA', fontSize: 14, outline: 'none' }} />
-          </div>
-          {error && <div style={{ color: '#EF4444', fontSize: 12, marginBottom: 12 }}>{error}</div>}
-          <button onClick={handleMonCashPay} disabled={!canSubmitMonCash || processing} style={{ width: '100%', background: canSubmitMonCash ? 'linear-gradient(135deg, #5B5FEF, #7B2FF7)' : '#232842', border: 'none', borderRadius: 12, padding: '13px', color: '#fff', fontWeight: 700, fontSize: 14 }}>
-            {processing ? 'Redirection...' : 'Payer avec MonCash'}
+      <div style={{ background: '#0F1220', border: '1px solid #232842', borderRadius: 12, padding: 14, marginBottom: 16 }}>
+        <div style={{ fontSize: 12, color: '#9CA3AF', marginBottom: 8 }}>1. Envoie ton montant vers ce numéro {method} :</div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ fontWeight: 800, fontSize: 16 }}>{merchantNumber}</div>
+          <button onClick={copyNumber} style={{ background: '#1A1F33', border: 'none', borderRadius: 8, padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 4, color: copied ? '#22C55E' : '#9CA3AF', fontSize: 11, fontWeight: 700 }}>
+            {copied ? <Check size={12} /> : <Copy size={12} />} {copied ? 'Copié' : 'Copier'}
           </button>
-        </>
-      ) : (
-        <>
-          <div style={{ background: '#0F1220', border: '1px solid #232842', borderRadius: 12, padding: 14, marginBottom: 16 }}>
-            <div style={{ fontSize: 12, color: '#9CA3AF', marginBottom: 8 }}>1. Envoie ton montant vers ce numéro NatCash :</div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ fontWeight: 800, fontSize: 16 }}>{merchantNumber}</div>
-              <button onClick={copyNumber} style={{ background: '#1A1F33', border: 'none', borderRadius: 8, padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 4, color: copied ? '#22C55E' : '#9CA3AF', fontSize: 11, fontWeight: 700 }}>
-                {copied ? <Check size={12} /> : <Copy size={12} />} {copied ? 'Copié' : 'Copier'}
-              </button>
-            </div>
-            <div style={{ fontSize: 11, color: '#6B7280', marginTop: 10 }}>2. Entre le montant envoyé et l'ID de transaction reçu par SMS ci-dessous.</div>
-          </div>
+        </div>
+        <div style={{ fontSize: 11, color: '#6B7280', marginTop: 10 }}>2. Entre le montant envoyé et l'ID de transaction reçu par SMS ci-dessous.</div>
+      </div>
 
-          <div style={{ marginBottom: 4 }}>
-            <label style={{ fontSize: 12, color: '#9CA3AF', marginBottom: 6, display: 'block' }}>Montant envoyé (HTG)</label>
-            <input type="number" placeholder="Ex: 500" value={amount} onChange={e => setAmount(e.target.value)} style={{ width: '100%', padding: '13px 14px', borderRadius: 12, marginBottom: 12, background: '#0F1220', border: '1px solid #232842', color: '#F5F6FA', fontSize: 14, outline: 'none' }} />
-          </div>
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ fontSize: 12, color: '#9CA3AF', marginBottom: 6, display: 'block' }}>ID de transaction</label>
-            <input placeholder="Ex: TX123456789" value={txId} onChange={e => setTxId(e.target.value)} style={{ width: '100%', padding: '13px 14px', borderRadius: 12, background: '#0F1220', border: '1px solid #232842', color: '#F5F6FA', fontSize: 14, outline: 'none' }} />
-          </div>
+      <div style={{ marginBottom: 4 }}>
+        <label style={{ fontSize: 12, color: '#9CA3AF', marginBottom: 6, display: 'block' }}>Montant envoyé (HTG)</label>
+        <input type="number" placeholder="Ex: 500" value={amount} onChange={e => setAmount(e.target.value)} style={{ width: '100%', padding: '13px 14px', borderRadius: 12, marginBottom: 12, background: '#0F1220', border: '1px solid #232842', color: '#F5F6FA', fontSize: 14, outline: 'none' }} />
+      </div>
+      <div style={{ marginBottom: 16 }}>
+        <label style={{ fontSize: 12, color: '#9CA3AF', marginBottom: 6, display: 'block' }}>ID de transaction</label>
+        <input placeholder="Ex: TX123456789" value={txId} onChange={e => setTxId(e.target.value)} style={{ width: '100%', padding: '13px 14px', borderRadius: 12, background: '#0F1220', border: '1px solid #232842', color: '#F5F6FA', fontSize: 14, outline: 'none' }} />
+      </div>
 
-          <button onClick={() => canSubmitNatCash && onSubmit({ method: 'NatCash', amount, txId })} disabled={!canSubmitNatCash} style={{ width: '100%', background: canSubmitNatCash ? 'linear-gradient(135deg, #5B5FEF, #7B2FF7)' : '#232842', border: 'none', borderRadius: 12, padding: '13px', color: '#fff', fontWeight: 700, fontSize: 14 }}>
-            Envoyer la demande de dépôt
-          </button>
-        </>
-      )}
+      <button onClick={() => canSubmit && onSubmit({ method, amount, txId })} disabled={!canSubmit} style={{ width: '100%', background: canSubmit ? 'linear-gradient(135deg, #5B5FEF, #7B2FF7)' : '#232842', border: 'none', borderRadius: 12, padding: '13px', color: '#fff', fontWeight: 700, fontSize: 14 }}>
+        Envoyer la demande de dépôt
+      </button>
     </ModalOverlay>
   );
 }
