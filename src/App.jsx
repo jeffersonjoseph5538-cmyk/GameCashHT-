@@ -394,6 +394,48 @@ function Header({ catalog, profile, onAuthClick, onLogout, onAdminClick, onAccou
   );
 }
 
+// ---------- Promo Ticker (bandeau défilant) ----------
+function PromoTicker({ items }) {
+  const loopItems = [...items, ...items]; // duplication pour un défilement continu sans coupure
+  return (
+    <div style={{ borderRadius: 18, marginBottom: 24, position: 'relative', overflow: 'hidden', background: 'linear-gradient(135deg, #1A1040, #3A0F5F)', border: '1px solid #2E1F5E', padding: '16px 0' }}>
+      <style>{`
+        @keyframes promo-ticker-scroll {
+          0% { transform: translateX(0); }
+          100% { transform: translateX(-50%); }
+        }
+        .promo-ticker-track {
+          display: flex;
+          width: max-content;
+          animation: promo-ticker-scroll 24s linear infinite;
+        }
+        .promo-ticker-track:hover {
+          animation-play-state: paused;
+        }
+      `}</style>
+      <div className="promo-ticker-track">
+        {loopItems.map((item, i) =>
+          item.href ? (
+            <a
+              key={i}
+              href={item.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ display: 'flex', alignItems: 'center', padding: '0 32px', color: '#B794F6', textDecoration: 'underline', fontSize: 14, fontWeight: 800, whiteSpace: 'nowrap' }}
+            >
+              {item.text}
+            </a>
+          ) : (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', padding: '0 32px', color: '#F5F6FA', fontSize: 14, fontWeight: 700, whiteSpace: 'nowrap' }}>
+              {item.text}
+            </div>
+          )
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ---------- Home Screen ----------
 function HomeScreen({ catalog, onSelectGame }) {
   const games = catalog.games;
@@ -404,22 +446,17 @@ function HomeScreen({ catalog, onSelectGame }) {
         <span style={{ position: 'absolute', left: 14, top: 13, color: '#6B7280' }}>🔍</span>
       </div>
 
-      <div style={{ borderRadius: 18, padding: 20, marginBottom: 24, position: 'relative', overflow: 'hidden', background: 'linear-gradient(135deg, #1A1040, #3A0F5F)', border: '1px solid #2E1F5E' }}>
-        <div style={{ fontSize: 11, color: '#B794F6', fontWeight: 700, letterSpacing: 1, marginBottom: 6 }}>RECHARGE INSTANTANÉE</div>
-        <div style={{ fontSize: 20, fontWeight: 800, marginBottom: 6, lineHeight: 1.3 }}>Diamants & UC livrés vite</div>
-        <div style={{ fontSize: 13, color: '#C4C9DE', marginBottom: 16 }}>Dépose via MonCash ou NatCash, reçois ton crédit rapidement.</div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          {games.map(g => (
-            <div key={g.id} style={{ width: 32, height: 32, borderRadius: 8, background: g.color, opacity: 0.85, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800, color: '#0B0E1A' }}>{g.name[0]}</div>
-          ))}
-        </div>
-      </div>
+      <PromoTicker items={[
+        { text: '💎 Diamants & UC livrés vite — Dépose via MonCash ou NatCash' },
+        { text: '📢 Rejoins notre canal WhatsApp pour les événements à venir', href: 'https://whatsapp.com/channel/0029VbD2LYq6RGJDEXUWA82j' },
+        { text: '⚡ Recharge instantanée, crédit reçu rapidement' },
+      ]} />
 
       <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 14 }}>Jeux Disponibles</div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         {games.map(game => (
           <button key={game.id} onClick={() => onSelectGame(game)} style={{ background: '#141829', border: '1px solid #232842', borderRadius: 16, padding: 0, overflow: 'hidden', textAlign: 'left' }}>
-            <div style={{ height: 90, background: game.imgUrl ? `url(${game.imgUrl}) center/cover` : `linear-gradient(135deg, ${game.color}55, #0B0E1A)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ height: 110, background: game.imgUrl ? `url(${game.imgUrl}) center 22%/cover no-repeat` : `linear-gradient(135deg, ${game.color}55, #0B0E1A)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               {!game.imgUrl && <Gem size={30} color={game.color} />}
             </div>
             <div style={{ padding: '10px 12px 12px' }}>
@@ -451,7 +488,7 @@ function BoutiqueScreen({ catalog, selectedGame, setSelectedGame, onBuy }) {
         ))}
       </div>
 
-      <div style={{ borderRadius: 16, padding: 20, marginBottom: 20, background: game.imgUrl ? `linear-gradient(135deg, ${game.color}55, #141829cc), url(${game.imgUrl}) center/cover` : `linear-gradient(135deg, ${game.color}33, #141829)`, border: `1px solid ${game.color}44` }}>
+      <div style={{ borderRadius: 16, padding: 20, marginBottom: 20, background: game.imgUrl ? `linear-gradient(135deg, ${game.color}55, #141829cc), url(${game.imgUrl}) center 22%/cover no-repeat` : `linear-gradient(135deg, ${game.color}33, #141829)`, border: `1px solid ${game.color}44` }}>
         <div style={{ fontWeight: 800, fontSize: 19 }}>{game.name}</div>
         <div style={{ fontSize: 12, color: '#C4C9DE', marginTop: 4 }}>Choisis ton pack, le crédit arrive directement sur ton compte en jeu</div>
       </div>
