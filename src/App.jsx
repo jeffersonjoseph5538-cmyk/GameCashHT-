@@ -394,43 +394,101 @@ function Header({ catalog, profile, onAuthClick, onLogout, onAdminClick, onAccou
   );
 }
 
-// ---------- Promo Ticker (bandeau défilant) ----------
-function PromoTicker({ items }) {
-  const loopItems = [...items, ...items]; // duplication pour un défilement continu sans coupure
+// ---------- Promo Carousel (cartes swipeables avec pagination) ----------
+function PromoCarousel({ slides }) {
+  const trackRef = React.useRef(null);
+  const [active, setActive] = useState(0);
+
+  const handleScroll = () => {
+    const el = trackRef.current;
+    if (!el) return;
+    const idx = Math.round(el.scrollLeft / el.clientWidth);
+    setActive(Math.min(idx, slides.length - 1));
+  };
+
+  const goTo = (i) => {
+    const el = trackRef.current;
+    if (!el) return;
+    el.scrollTo({ left: i * el.clientWidth, behavior: 'smooth' });
+  };
+
+  // Défilement automatique toutes les 4.5s (s'arrête si l'utilisateur interagit puis reprend)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const el = trackRef.current;
+      if (!el) return;
+      const next = (Math.round(el.scrollLeft / el.clientWidth) + 1) % slides.length;
+      goTo(next);
+    }, 4500);
+    return () => clearInterval(timer);
+  }, [slides.length]);
+
   return (
-    <div style={{ borderRadius: 18, marginBottom: 24, position: 'relative', overflow: 'hidden', background: 'linear-gradient(135deg, #1A1040, #3A0F5F)', border: '1px solid #2E1F5E', padding: '16px 0' }}>
+    <div style={{ marginBottom: 24 }}>
       <style>{`
-        @keyframes promo-ticker-scroll {
-          0% { transform: translateX(0); }
-          100% { transform: translateX(-50%); }
-        }
-        .promo-ticker-track {
+        .promo-carousel-track {
           display: flex;
-          width: max-content;
-          animation: promo-ticker-scroll 24s linear infinite;
+          overflow-x: auto;
+          scroll-snap-type: x mandatory;
+          scrollbar-width: none;
+          -ms-overflow-style: none;
+          border-radius: 18px;
         }
-        .promo-ticker-track:hover {
-          animation-play-state: paused;
+        .promo-carousel-track::-webkit-scrollbar { display: none; }
+        .promo-carousel-slide {
+          flex: 0 0 100%;
+          scroll-snap-align: start;
         }
       `}</style>
-      <div className="promo-ticker-track">
-        {loopItems.map((item, i) =>
-          item.href ? (
-            <a
-              key={i}
-              href={item.href}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ display: 'flex', alignItems: 'center', padding: '0 32px', color: '#B794F6', textDecoration: 'underline', fontSize: 14, fontWeight: 800, whiteSpace: 'nowrap' }}
-            >
-              {item.text}
-            </a>
-          ) : (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', padding: '0 32px', color: '#F5F6FA', fontSize: 14, fontWeight: 700, whiteSpace: 'nowrap' }}>
-              {item.text}
+      <div className="promo-carousel-track" ref={trackRef} onScroll={handleScroll}>
+        {slides.map((s, i) => (
+          <div key={i} className="promo-carousel-slide">
+            <div style={{
+              display: 'flex', alignItems: 'stretch', minHeight: 140, borderRadius: 18,
+              background: s.bg || 'linear-gradient(135deg, #1A1040, #3A0F5F)',
+              border: '1px solid #2E1F5E', overflow: 'hidden'
+            }}>
+              {s.image && (
+                <div style={{ width: 90, flexShrink: 0, background: `url(${s.image}) center/cover` }} />
+              )}
+              <div style={{ padding: '18px 18px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                {s.icon && (
+                  <div style={{ width: 40, height: 40, borderRadius: 10, background: '#0000003a', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 10 }}>
+                    <s.icon size={20} color="#F2C94C" />
+                  </div>
+                )}
+                <div style={{ fontSize: 17, fontWeight: 800, lineHeight: 1.25, marginBottom: 6 }}>{s.title}</div>
+                {s.subtitle && <div style={{ fontSize: 13, color: '#C4C9DE', marginBottom: 14 }}>{s.subtitle}</div>}
+                {s.button && (
+                  <a
+                    href={s.href}
+                    target={s.href ? '_blank' : undefined}
+                    rel="noopener noreferrer"
+                    onClick={e => { if (!s.href) e.preventDefault(); }}
+                    style={{
+                      alignSelf: 'flex-start', background: '#2DD4EF', color: '#0B0E1A', fontWeight: 800,
+                      fontSize: 13, padding: '10px 18px', borderRadius: 12, textDecoration: 'none'
+                    }}
+                  >
+                    {s.button}
+                  </a>
+                )}
+              </div>
             </div>
-          )
-        )}
+          </div>
+        ))}
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'center', gap: 6, marginTop: 10 }}>
+        {slides.map((_, i) => (
+          <button
+            key={i}
+            onClick={() => goTo(i)}
+            style={{
+              width: i === active ? 18 : 6, height: 6, borderRadius: 3, border: 'none',
+              background: i === active ? '#2DD4EF' : '#2E1F5E', transition: 'width 0.25s, background 0.25s', padding: 0, cursor: 'pointer'
+            }}
+          />
+        ))}
       </div>
     </div>
   );
@@ -446,10 +504,27 @@ function HomeScreen({ catalog, onSelectGame }) {
         <span style={{ position: 'absolute', left: 14, top: 13, color: '#6B7280' }}>🔍</span>
       </div>
 
-      <PromoTicker items={[
-        { text: '💎 Diamants & UC livrés vite — Dépose via MonCash ou NatCash' },
-        { text: '📢 Rejoins notre canal WhatsApp pour les événements à venir', href: 'https://whatsapp.com/channel/0029VbD2LYq6RGJDEXUWA82j' },
-        { text: '⚡ Recharge instantanée, crédit reçu rapidement' },
+      <PromoCarousel slides={[
+        {
+          title: 'Diamants & UC livrés vite',
+          subtitle: 'Dépose via MonCash ou NatCash, reçois ton crédit rapidement.',
+          icon: Gem,
+          bg: 'linear-gradient(135deg, #1A1040, #3A0F5F)',
+        },
+        {
+          title: 'Rejoins notre canal WhatsApp',
+          subtitle: 'Événements à venir, promos et annonces en avant-première.',
+          icon: Phone,
+          bg: 'linear-gradient(135deg, #0B3B3F, #0F5F63)',
+          button: 'Canal WhatsApp',
+          href: 'https://whatsapp.com/channel/0029VbD2LYq6RGJDEXUWA82j',
+        },
+        {
+          title: 'Recharge instantanée',
+          subtitle: 'Support rapide et crédit reçu en quelques minutes.',
+          icon: Clock,
+          bg: 'linear-gradient(135deg, #3A1040, #5F0F3A)',
+        },
       ]} />
 
       <div style={{ fontWeight: 800, fontSize: 17, marginBottom: 14 }}>Jeux Disponibles</div>
