@@ -1276,7 +1276,6 @@ function DepositModal({ catalog, onClose, onSubmit }) {
           </button>
         </>
       )}
-      </button>
     </ModalOverlay>
   );
 }
