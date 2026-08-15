@@ -87,7 +87,7 @@ export default function App() {
 
   const loadCatalog = async () => {
     const { data, error } = await supabase.from('catalog').select('*').eq('id', 1).maybeSingle();
-    if (!error && data) {
+    if (data) {
       setCatalog({
         brand_name: data.brand_name || DEFAULT_CATALOG.brand_name,
         logo_url: data.logo_url || '',
@@ -95,10 +95,13 @@ export default function App() {
         merchant_natcash: data.merchant_natcash || DEFAULT_CATALOG.merchant_natcash,
         games: (data.games && data.games.length > 0) ? data.games : DEFAULT_CATALOG.games,
       });
-    } else {
-      // Aucune ligne encore: on en crée une avec les valeurs par défaut
-      await supabase.from('catalog').upsert({ id: 1, ...DEFAULT_CATALOG, games: DEFAULT_CATALOG.games });
+    } else if (error) {
+      // ⚠️ Erreur de lecture (réseau, RLS...) : on garde le catalogue actuel tel quel,
+      // on ne touche JAMAIS à la base ici pour éviter d'effacer le travail de l'admin.
+      console.log('Erreur de chargement du catalogue (catalogue local conservé):', error.message);
     }
+    // Si data et error sont tous les deux null/undefined, c'est qu'il n'y a vraiment aucune ligne :
+    // ça n'arrive normalement qu'une seule fois, à la toute première utilisation du site.
   };
 
   const loadProfile = async (userId) => {
