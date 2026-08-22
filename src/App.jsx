@@ -174,12 +174,22 @@ export default function App() {
 
   const submitPurchase = async (pack, game, playerId, serverId) => {
     if (!profile) { setAuthOpen(true); return; }
-    if (profile.balance < pack.price) {
+
+    // ✅ FIX: débit atomique en base — même en cas de double-clic/connexion instable,
+    // il est désormais impossible de dépenser plus que le solde réel.
+    const { data: canAfford, error: deductErr } = await supabase.rpc('deduct_balance_if_sufficient', {
+      p_user_id: session.user.id,
+      p_amount: pack.price,
+    });
+    if (deductErr) { showToast(deductErr.message); return; }
+    if (!canAfford) {
       showToast("Solde insuffisant. Fais un dépôt d'abord.");
       setBuyOpen(null);
       setDepositOpen(true);
+      refreshProfile();
       return;
     }
+
     const { data: txRow, error: txError } = await supabase
       .from('transactions')
       .insert({
@@ -188,13 +198,16 @@ export default function App() {
       })
       .select()
       .single();
-    if (txError) { showToast(txError.message); return; }
-
-    const { error: balError } = await supabase
-      .from('users')
-      .update({ balance: profile.balance - pack.price })
-      .eq('id', session.user.id);
-    if (balError) { showToast(balError.message); return; }
+    if (txError) {
+      // Le débit a déjà eu lieu mais la commande n'a pas pu être créée : on rembourse immédiatement
+      const { data: freshUser } = await supabase.from('users').select('balance').eq('id', session.user.id).maybeSingle();
+      if (freshUser) {
+        await supabase.from('users').update({ balance: Number(freshUser.balance) + Number(pack.price) }).eq('id', session.user.id);
+      }
+      showToast(txError.message);
+      refreshProfile();
+      return;
+    }
 
     setBuyOpen(null);
     showToast('Commande envoyée, livraison en cours...');
@@ -236,41 +249,61 @@ export default function App() {
   };
 
   // ---------- Admin: approve/reject transactions ----------
+  // ✅ FIX: chaque action ne fait effet QUE si la transaction est encore "pending" au moment précis
+  // de la requête (mise à jour conditionnelle) — un deuxième clic ne trouve plus rien à modifier,
+  // ce qui empêche tout remboursement ou crédit en double.
   const approveDeposit = async (tx) => {
-    const { data: userRow } = await supabase.from('users').select('balance').eq('id', tx.user_id).maybeSingle();
-    if (!userRow) { showToast("Client introuvable"); return; }
-    const { error: balErr } = await supabase
-      .from('users')
-      .update({ balance: Number(userRow.balance) + Number(tx.amount) })
-      .eq('id', tx.user_id);
-    if (balErr) { showToast(balErr.message); return; }
-    const { error: txErr } = await supabase.from('transactions').update({ status: 'completed' }).eq('id', tx.id);
+    const { data: updated, error: txErr } = await supabase
+      .from('transactions').update({ status: 'completed' })
+      .eq('id', tx.id).eq('status', 'pending')
+      .select();
     if (txErr) { showToast(txErr.message); return; }
+    if (!updated || updated.length === 0) { showToast('Déjà traité.'); await loadPendingTransactions(); return; }
+
+    const { data: userRow } = await supabase.from('users').select('balance').eq('id', tx.user_id).maybeSingle();
+    if (userRow) {
+      await supabase.from('users').update({ balance: Number(userRow.balance) + Number(tx.amount) }).eq('id', tx.user_id);
+    }
     showToast('Dépôt approuvé, solde crédité.');
     await loadPendingTransactions();
   };
 
   const rejectDeposit = async (tx) => {
-    const { error } = await supabase.from('transactions').update({ status: 'rejected' }).eq('id', tx.id);
+    const { data: updated, error } = await supabase
+      .from('transactions').update({ status: 'rejected' })
+      .eq('id', tx.id).eq('status', 'pending')
+      .select();
     if (error) { showToast(error.message); return; }
+    if (!updated || updated.length === 0) { showToast('Déjà traité.'); await loadPendingTransactions(); return; }
     showToast('Dépôt rejeté.');
     await loadPendingTransactions();
   };
 
   const approvePurchase = async (tx) => {
-    const { error } = await supabase.from('transactions').update({ status: 'completed' }).eq('id', tx.id);
+    const { data: updated, error } = await supabase
+      .from('transactions').update({ status: 'completed' })
+      .eq('id', tx.id).eq('status', 'pending')
+      .select();
     if (error) { showToast(error.message); return; }
+    if (!updated || updated.length === 0) { showToast('Déjà traité.'); await loadPendingTransactions(); return; }
     showToast('Commande marquée comme livrée.');
     await loadPendingTransactions();
   };
 
   const rejectPurchase = async (tx) => {
+    // On marque d'abord la transaction comme rejetée, de façon conditionnelle :
+    // si elle n'est plus "pending" (déjà traitée par un clic précédent), rien ne se passe et aucun remboursement n'a lieu.
+    const { data: updated, error } = await supabase
+      .from('transactions').update({ status: 'rejected' })
+      .eq('id', tx.id).eq('status', 'pending')
+      .select();
+    if (error) { showToast(error.message); return; }
+    if (!updated || updated.length === 0) { showToast('Déjà traité.'); await loadPendingTransactions(); return; }
+
     const { data: userRow } = await supabase.from('users').select('balance').eq('id', tx.user_id).maybeSingle();
     if (userRow) {
       await supabase.from('users').update({ balance: Number(userRow.balance) + Number(tx.amount) }).eq('id', tx.user_id);
     }
-    const { error } = await supabase.from('transactions').update({ status: 'rejected' }).eq('id', tx.id);
-    if (error) { showToast(error.message); return; }
     showToast('Commande rejetée, client remboursé.');
     await loadPendingTransactions();
   };
@@ -1289,6 +1322,7 @@ function BuyModal({ pack, game, profile, onClose, onConfirm }) {
   const [serverId, setServerId] = useState('');
   const [verifying, setVerifying] = useState(false);
   const [verifiedName, setVerifiedName] = useState(null); // null = pas encore vérifié, '' = invalide, 'Nom' = valide
+  const [submitting, setSubmitting] = useState(false); // ✅ empêche les doubles-clics / double-envoi
   const insufficient = profile && profile.balance < pack.price;
 
   const idsReady = playerId.trim().length > 0 && (!game.requiresServerId || serverId.trim().length > 0);
@@ -1395,14 +1429,22 @@ function BuyModal({ pack, game, profile, onClose, onConfirm }) {
       {insufficient && <div style={{ fontSize: 12, color: '#F2A900', marginBottom: 12 }}>Solde insuffisant. Tu seras redirigé vers le dépôt.</div>}
 
       <button
-        onClick={() => insufficient ? onConfirm() : (canConfirm && onConfirm(playerId, serverId))}
-        disabled={!insufficient && !canConfirm}
+        onClick={async () => {
+          if (submitting) return; // ✅ ignore les clics supplémentaires pendant l'envoi
+          if (insufficient) { onConfirm(); return; }
+          if (canConfirm) {
+            setSubmitting(true);
+            await onConfirm(playerId, serverId);
+            setSubmitting(false); // sans effet si le modal a déjà été fermé après succès
+          }
+        }}
+        disabled={submitting || (!insufficient && !canConfirm)}
         style={{
           width: '100%', background: (insufficient || canConfirm) ? 'linear-gradient(135deg, #5B5FEF, #7B2FF7)' : '#232842',
-          border: 'none', borderRadius: 12, padding: '13px', color: '#fff', fontWeight: 700, fontSize: 14
+          border: 'none', borderRadius: 12, padding: '13px', color: '#fff', fontWeight: 700, fontSize: 14, opacity: submitting ? 0.7 : 1
         }}
       >
-        {insufficient ? 'Faire un dépôt' : "Confirmer l'achat"}
+        {submitting ? 'Envoi en cours...' : insufficient ? 'Faire un dépôt' : "Confirmer l'achat"}
       </button>
     </ModalOverlay>
   );
